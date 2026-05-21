@@ -8,6 +8,7 @@ import {
 } from "remotion";
 
 import { MusicBed } from "./components/MusicBed";
+import { SceneFrame } from "./components/SceneFrame";
 import { ArchitectureScene } from "./compositions/ArchitectureScene";
 import { CodeWalkthroughScene } from "./compositions/CodeWalkthroughScene";
 import { IntroScene } from "./compositions/IntroScene";
@@ -53,12 +54,12 @@ export const PhantomVideo: React.FC<CompositionProps> = ({
           );
           return (
             <Series.Sequence key={section.id} durationInFrames={durationFrames}>
-              <AbsoluteFill>
+              <SceneFrame durationInFrames={durationFrames}>
                 {renderScene(section, script.key_takeaways ?? [])}
-                {audioTrack?.audio_path && (
-                  <Audio src={resolveAudio(audioTrack.audio_path)} />
-                )}
-              </AbsoluteFill>
+              </SceneFrame>
+              {audioTrack?.audio_path && (
+                <Audio src={resolveAudio(audioTrack.audio_path)} />
+              )}
             </Series.Sequence>
           );
         })}
