@@ -91,6 +91,8 @@ _JARGON: dict[str, str] = {
     "CI/CD": "C I C D",
     "CSS": "C S S",
     "HTML": "H T M L",
+    "HTTP": "H T T P",     # otherwise read as "h-t-t-p" with awkward break
+    "HTTPS": "H T T P S",  # user reported pause mid-word; force consistent spell
     "TS": "T S",
     "JS": "J S",
     "Postgres": "Postgress",  # otherwise reads as "Post-grease"
@@ -100,6 +102,26 @@ _JARGON: dict[str, str] = {
     "AI": "A I",
     "LLM": "L L M",
     "GPT": "G P T",
+    # HTTP verbs — Brian spells them with weird mid-letter pauses
+    # ("GE...T", "PO...ST"). Forcing explicit letter spacing makes the
+    # cadence consistent.
+    "GET": "G E T",
+    "POST": "P O S T",
+    "PUT": "P U T",
+    "DELETE": "D E L E T E",
+    "PATCH": "P A T C H",
+    "HEAD": "H E A D",
+    # npm package names with a single-letter prefix and a dash. Brian
+    # reads them as portmanteau words ("panny" for p-any). Forcing a
+    # comma + space makes it read as "p, any" with a clear pause.
+    "p-any": "p, any",
+    "p-timeout": "p, timeout",
+    "p-throttle": "p, throttle",
+    "p-limit": "p, limit",
+    "p-map": "p, map",
+    "p-queue": "p, queue",
+    "p-retry": "p, retry",
+    "p-cancelable": "p, cancelable",
 }
 
 

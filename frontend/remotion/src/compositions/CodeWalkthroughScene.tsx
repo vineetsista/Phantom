@@ -224,7 +224,15 @@ export const CodeWalkthroughScene: React.FC<{ section: ScriptSection }> = ({
     activeLineNumber != null
       ? (activeLineNumber - 1) * LINE_HEIGHT + scrollOffset
       : viewportHeight / 2;
-  const zoomOriginPct = Math.max(0, Math.min(100, (lineYInViewport / viewportHeight) * 100));
+  // Clamp the zoom origin to the middle 60% of the viewport so the active
+  // line never clips when the panel scales to 1.18×. If the origin was at
+  // 0% (top) or 100% (bottom), scale=1.18 would push 18% of the content
+  // off the opposite edge — which previously cropped the highlighted line
+  // when it sat near the viewport boundary.
+  const zoomOriginPct = Math.max(
+    20,
+    Math.min(80, (lineYInViewport / viewportHeight) * 100),
+  );
 
   // Type-on punchline. Find the punchline highlight; if it's currently
   // active, compute charsRevealed based on frame progression through its
