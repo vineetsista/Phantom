@@ -122,6 +122,26 @@ def _normalize(script: dict[str, Any], analysis: AnalysisResult) -> dict[str, An
         if required not in seen:
             sections.append(_default_section(required, analysis))
 
+    # Always inject the analyzer's real code excerpt into code_walkthrough —
+    # Claude isn't trusted to hand-write source code, so we override with the
+    # excerpt actually read off disk.
+    excerpt = analysis.code_excerpt or {}
+    if excerpt.get("code"):
+        for section in sections:
+            if section.get("id") == "code_walkthrough":
+                data = (section.setdefault("visuals", {}).setdefault("data", {}))
+                if not data.get("code"):
+                    data["code"] = excerpt.get("code", "")
+                    data["path"] = excerpt.get("path", "")
+                    data["language"] = excerpt.get("language", "")
+                    data.setdefault(
+                        "highlight_lines",
+                        _heuristic_highlight_lines(excerpt.get("code", "")),
+                    )
+                if not data.get("files"):
+                    data["files"] = analysis.top_files[:3]
+                break
+
     script["sections"] = sections
     script.setdefault("title", _default_title(analysis))
     script.setdefault("hook", _default_hook(analysis))
@@ -190,16 +210,23 @@ def _default_section(section_id: str, analysis: AnalysisResult) -> dict[str, Any
         top = analysis.top_files[:3]
         if not top:
             top = [{"path": "src/index.ts", "language": "TypeScript", "bytes": 0}]
+        excerpt = analysis.code_excerpt or {}
         return {
             "id": "code_walkthrough",
             "narration": (
-                "The biggest source files give us a window into the project's complexity: "
-                f"{', '.join(f['path'] for f in top)}. These are where the core logic lives."
+                f"Here's a window into the code — {excerpt.get('path', top[0]['path'])}. "
+                "Watch how the entry point wires the system together."
             ),
             "duration_seconds": 18,
             "visuals": {
                 "type": "code_highlight",
-                "data": {"files": top},
+                "data": {
+                    "files": top,
+                    "code": excerpt.get("code", ""),
+                    "path": excerpt.get("path", ""),
+                    "language": excerpt.get("language", ""),
+                    "highlight_lines": _heuristic_highlight_lines(excerpt.get("code", "")),
+                },
             },
         }
     # summary
@@ -226,6 +253,23 @@ def _default_hook(analysis: AnalysisResult) -> str:
     if desc:
         return desc if desc.endswith(".") else desc + "."
     return "Here's how this project is put together."
+
+
+def _heuristic_highlight_lines(code: str) -> list[int]:
+    """Pick 2–3 line numbers that are likely the most interesting — typically
+    function/class definitions, exports, or top-level returns. Conservative
+    on purpose; the scene draws a moving highlight box across these."""
+    if not code:
+        return []
+    keywords = ("def ", "class ", "function ", "export ", "async ", "fn ", "func ")
+    picks: list[int] = []
+    for index, line in enumerate(code.splitlines()):
+        stripped = line.lstrip()
+        if any(stripped.startswith(k) for k in keywords):
+            picks.append(index + 1)
+        if len(picks) >= 3:
+            break
+    return picks
 
 
 def _default_takeaways(analysis: AnalysisResult) -> list[str]:

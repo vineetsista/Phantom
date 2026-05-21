@@ -1,7 +1,8 @@
-import React from "react";
+import React, { useMemo } from "react";
 import {
   AbsoluteFill,
   interpolate,
+  spring,
   useCurrentFrame,
   useVideoConfig,
 } from "remotion";
@@ -17,11 +18,114 @@ interface FileSummary {
   bytes?: number;
 }
 
+interface CodeData {
+  files?: FileSummary[];
+  code?: string;
+  path?: string;
+  language?: string;
+  highlight_lines?: number[];
+}
+
+const LINE_HEIGHT = 30;
+const CODE_FONT_SIZE = 19;
+const MAX_VISIBLE_LINES = 18;
+
+const PALETTE = {
+  keyword: "#7B61FF",
+  string: "#34D399",
+  number: "#F59E0B",
+  comment: "#6B6B78",
+  symbol: COLORS.cyan,
+  ident: COLORS.text,
+};
+
+const KEYWORDS = new Set([
+  // shared across most languages we touch
+  "import", "from", "as", "export", "default", "return", "if", "else",
+  "for", "while", "in", "of", "let", "const", "var", "function", "async",
+  "await", "class", "extends", "new", "this", "self", "true", "false",
+  "null", "None", "True", "False", "def", "lambda", "yield", "raise",
+  "try", "except", "finally", "with", "pass", "and", "or", "not",
+  "interface", "type", "enum", "public", "private", "static", "void",
+  "int", "str", "bool", "float", "list", "dict", "tuple", "set",
+  "fn", "let", "mut", "pub", "use", "mod", "impl", "trait", "struct",
+  "func", "package", "go", "chan", "map", "switch", "case",
+]);
+
+type Tok = { text: string; kind: keyof typeof PALETTE };
+
+function tokenizeLine(line: string): Tok[] {
+  // Comment fast-path: rest of the line after #, //, --, etc.
+  const commentMatch = line.match(/^(\s*)(#|\/\/|--)(.*)$/);
+  if (commentMatch) {
+    return [
+      { text: commentMatch[1], kind: "ident" },
+      { text: commentMatch[2] + commentMatch[3], kind: "comment" },
+    ];
+  }
+
+  const tokens: Tok[] = [];
+  // Regex order matters: strings → numbers → identifiers/keywords → other
+  const pattern =
+    /(\s+)|("[^"]*"|'[^']*'|`[^`]*`)|(\b\d+(?:\.\d+)?\b)|([A-Za-z_][A-Za-z0-9_]*)|([^A-Za-z0-9_\s])/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(line))) {
+    const [whole, ws, str, num, ident, sym] = match;
+    if (ws) {
+      tokens.push({ text: whole, kind: "ident" });
+    } else if (str) {
+      tokens.push({ text: whole, kind: "string" });
+    } else if (num) {
+      tokens.push({ text: whole, kind: "number" });
+    } else if (ident) {
+      tokens.push({ text: whole, kind: KEYWORDS.has(ident) ? "keyword" : "ident" });
+    } else if (sym) {
+      tokens.push({ text: whole, kind: "symbol" });
+    }
+  }
+  return tokens;
+}
+
 export const CodeWalkthroughScene: React.FC<{ section: ScriptSection }> = ({ section }) => {
   const frame = useCurrentFrame();
-  const { durationInFrames } = useVideoConfig();
+  const { fps, durationInFrames } = useVideoConfig();
 
-  const files = ((section.visuals?.data as { files?: FileSummary[] })?.files ?? []).slice(0, 6);
+  const data = (section.visuals?.data as CodeData) ?? {};
+  const lines = useMemo(() => (data.code ?? "").split("\n").slice(0, MAX_VISIBLE_LINES), [data.code]);
+  const tokens = useMemo(() => lines.map(tokenizeLine), [lines]);
+  const highlights = (data.highlight_lines ?? []).filter(
+    (n) => n >= 1 && n <= lines.length,
+  );
+
+  // Header springs in first
+  const headerSpring = spring({ frame, fps, config: { damping: 20, stiffness: 130 } });
+
+  // Code container fades in after 8 frames
+  const codeOpacity = interpolate(frame, [8, 24], [0, 1], { extrapolateRight: "clamp" });
+
+  // Per-line type-on reveal
+  const linesRevealedAt = (index: number) => 18 + index * 3;
+
+  // Highlight box position — picks the next highlight line based on frame
+  const activeHighlight = useMemo(() => {
+    if (highlights.length === 0) return null;
+    const startFrame = 60;
+    const perHighlight = Math.max(
+      30,
+      Math.floor((durationInFrames - startFrame - 30) / highlights.length),
+    );
+    if (frame < startFrame) return null;
+    const slot = Math.min(
+      highlights.length - 1,
+      Math.floor((frame - startFrame) / perHighlight),
+    );
+    const localFrame = (frame - startFrame) % perHighlight;
+    const eased = interpolate(localFrame, [0, 16], [0, 1], {
+      extrapolateLeft: "clamp",
+      extrapolateRight: "clamp",
+    });
+    return { lineNumber: highlights[slot], appear: eased };
+  }, [highlights, frame, durationInFrames]);
 
   return (
     <AbsoluteFill>
@@ -35,16 +139,17 @@ export const CodeWalkthroughScene: React.FC<{ section: ScriptSection }> = ({ sec
           right: 0,
           textAlign: "center",
           fontFamily: FONT_DISPLAY,
+          opacity: headerSpring,
+          transform: `translateY(${interpolate(headerSpring, [0, 1], [16, 0])}px)`,
         }}
       >
         <div
           style={{
             fontFamily: FONT_MONO,
-            fontSize: 22,
+            fontSize: 18,
             letterSpacing: 6,
             textTransform: "uppercase",
             color: COLORS.cyan,
-            opacity: interpolate(frame, [0, 16], [0, 1], { extrapolateRight: "clamp" }),
           }}
         >
           Where the work lives
@@ -52,102 +157,117 @@ export const CodeWalkthroughScene: React.FC<{ section: ScriptSection }> = ({ sec
         <div
           style={{
             marginTop: 14,
-            fontSize: 64,
+            fontSize: 58,
             fontWeight: 700,
             color: COLORS.text,
             letterSpacing: -1,
-            opacity: interpolate(frame, [4, 20], [0, 1], { extrapolateRight: "clamp" }),
           }}
         >
           Code walkthrough
         </div>
+        {data.path && (
+          <div
+            style={{
+              marginTop: 12,
+              fontFamily: FONT_MONO,
+              fontSize: 22,
+              color: "rgba(245,245,240,0.55)",
+            }}
+          >
+            {data.path}
+          </div>
+        )}
       </div>
 
       <div
         style={{
           position: "absolute",
-          inset: "260px 120px 160px",
-          fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+          inset: "320px 160px 160px",
+          fontFamily: FONT_MONO,
+          fontSize: CODE_FONT_SIZE,
+          lineHeight: `${LINE_HEIGHT}px`,
+          color: COLORS.text,
+          background: "rgba(17,17,24,0.78)",
+          border: "1px solid rgba(255,255,255,0.08)",
+          borderRadius: 18,
+          padding: "28px 36px",
+          overflow: "hidden",
+          opacity: codeOpacity,
+          boxShadow: `0 0 80px -32px ${COLORS.cyan}55`,
         }}
       >
-        {files.map((file, index) => {
-          const enterFrame = 24 + index * 10;
-          const opacity = interpolate(frame, [enterFrame, enterFrame + 14], [0, 1], {
+        {/* Highlight box scans behind the code, picking out each interesting line in turn */}
+        {activeHighlight && (
+          <div
+            style={{
+              position: "absolute",
+              left: 12,
+              right: 12,
+              top: 28 + (activeHighlight.lineNumber - 1) * LINE_HEIGHT - 2,
+              height: LINE_HEIGHT + 4,
+              background: `linear-gradient(90deg, ${COLORS.cyan}22, ${COLORS.cyan}11 60%, transparent)`,
+              borderLeft: `2px solid ${COLORS.cyan}`,
+              borderRadius: 6,
+              opacity: activeHighlight.appear,
+              transition: "top 320ms cubic-bezier(0.16, 1, 0.3, 1)",
+            }}
+          />
+        )}
+
+        {tokens.map((lineTokens, index) => {
+          const start = linesRevealedAt(index);
+          const opacity = interpolate(frame, [start, start + 10], [0, 1], {
             extrapolateLeft: "clamp",
             extrapolateRight: "clamp",
           });
-          const slideX = interpolate(frame, [enterFrame, enterFrame + 14], [-40, 0], {
+          const slide = interpolate(frame, [start, start + 10], [-6, 0], {
             extrapolateLeft: "clamp",
             extrapolateRight: "clamp",
           });
           return (
             <div
-              key={file.path}
+              key={index}
               style={{
                 opacity,
-                transform: `translateX(${slideX}px)`,
-                margin: "0 0 18px",
-                padding: "20px 28px",
-                borderRadius: 16,
-                background: "rgba(17,17,24,0.85)",
-                border: "1px solid rgba(255,255,255,0.08)",
-                display: "flex",
-                alignItems: "center",
-                gap: 24,
+                transform: `translateX(${slide}px)`,
+                position: "relative",
+                whiteSpace: "pre",
               }}
             >
               <span
                 style={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: 4,
-                  background: COLORS.cyan,
-                  boxShadow: `0 0 14px ${COLORS.cyan}`,
+                  display: "inline-block",
+                  width: 44,
+                  color: PALETTE.comment,
+                  userSelect: "none",
+                  textAlign: "right",
+                  paddingRight: 14,
                 }}
-              />
-              <span style={{ flex: 1, fontSize: 30, color: COLORS.text }}>{file.path}</span>
-              {file.language && (
-                <span
-                  style={{
-                    fontSize: 18,
-                    color: COLORS.cyan,
-                    padding: "4px 12px",
-                    borderRadius: 999,
-                    border: `1px solid ${COLORS.cyan}55`,
-                    background: `${COLORS.cyan}10`,
-                    fontFamily: FONT_BODY,
-                  }}
-                >
-                  {file.language}
+              >
+                {(index + 1).toString().padStart(2, "0")}
+              </span>
+              {lineTokens.map((tok, ti) => (
+                <span key={ti} style={{ color: PALETTE[tok.kind] }}>
+                  {tok.text}
                 </span>
-              )}
-              {typeof file.bytes === "number" && (
-                <span style={{ fontSize: 22, color: "rgba(245,245,240,0.5)" }}>
-                  {(file.bytes / 1024).toFixed(1)} KB
-                </span>
-              )}
+              ))}
             </div>
           );
         })}
-      </div>
 
-      {/* Subtle scan-line that sweeps across the file list */}
-      <div
-        style={{
-          position: "absolute",
-          left: 0,
-          right: 0,
-          top: interpolate(
-            frame,
-            [0, durationInFrames],
-            [260, 260 + 460],
-            { extrapolateRight: "clamp" },
-          ),
-          height: 2,
-          background: `linear-gradient(90deg, transparent, ${COLORS.cyan}, transparent)`,
-          opacity: 0.4,
-        }}
-      />
+        {lines.length === 0 && (
+          <div
+            style={{
+              padding: "40px 0",
+              color: "rgba(245,245,240,0.5)",
+              fontStyle: "italic",
+              fontFamily: FONT_BODY,
+            }}
+          >
+            // No source excerpt available for this repo
+          </div>
+        )}
+      </div>
 
       <Watermark />
     </AbsoluteFill>

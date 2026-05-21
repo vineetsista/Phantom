@@ -43,11 +43,26 @@ const PREVIEW_SCRIPT: VideoScript = {
     },
     {
       id: "code_walkthrough",
-      narration: "These are the biggest source files.",
+      narration: "Here's a window into the code.",
       duration_seconds: 18,
       visuals: {
         type: "code_highlight",
         data: {
+          path: "backend/workers/tasks.py",
+          language: "Python",
+          code: [
+            "from celery import shared_task",
+            "from services import analyzer, script, voice, assembler",
+            "",
+            "@shared_task(bind=True, name=\"phantom.generate_video\")",
+            "def generate_video(self, job_id, repo_url, options):",
+            "    analysis = analyzer.analyze(repo_url)",
+            "    script_data = script.generate(analysis)",
+            "    audio = voice.generate(script_data, job_id)",
+            "    output = assembler.assemble(job_id, script_data, audio)",
+            "    return {\"video_url\": output[\"video_path\"]}",
+          ].join("\n"),
+          highlight_lines: [4, 6, 9],
           files: [
             { path: "backend/workers/tasks.py", language: "Python", bytes: 4200 },
             { path: "backend/services/repo_analyzer.py", language: "Python", bytes: 7800 },

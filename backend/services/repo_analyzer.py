@@ -127,6 +127,7 @@ class AnalysisResult:
     architecture_hint: str = "unknown"
     modules: list[dict] = field(default_factory=list)
     readme_excerpt: str = ""
+    code_excerpt: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -141,6 +142,7 @@ class AnalysisResult:
             "architecture_hint": self.architecture_hint,
             "modules": self.modules,
             "readme_excerpt": self.readme_excerpt,
+            "code_excerpt": self.code_excerpt,
         }
 
     @property
@@ -250,6 +252,7 @@ def _analyze_local(root: Path, metadata: RepoMetadata) -> AnalysisResult:
 
     architecture_hint = _guess_architecture(root, config_files, directories)
     modules = _extract_modules(root, directories, config_files)
+    code_excerpt = _read_code_excerpt(root, top_files)
 
     return AnalysisResult(
         repo={
@@ -271,6 +274,7 @@ def _analyze_local(root: Path, metadata: RepoMetadata) -> AnalysisResult:
         architecture_hint=architecture_hint,
         modules=modules,
         readme_excerpt=readme_excerpt,
+        code_excerpt=code_excerpt,
     )
 
 
@@ -358,6 +362,47 @@ def _extract_modules(
     return modules
 
 
+EXCERPT_MAX_LINES = 28
+EXCERPT_MAX_BYTES = 4_000
+
+
+def _read_code_excerpt(root: Path, top_files: list[dict]) -> dict[str, Any]:
+    """Read the first ~28 lines of the most prominent source file so the
+    CodeWalkthrough scene can render real code instead of a file list.
+
+    Picks the largest source file that is plausibly hand-written (skips
+    lockfiles, minified bundles, generated proto stubs)."""
+    for entry in top_files:
+        path = entry.get("path", "")
+        if not path or _looks_generated(path):
+            continue
+        absolute = root / path
+        if not absolute.is_file():
+            continue
+        try:
+            text = absolute.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        lines = text.splitlines()[:EXCERPT_MAX_LINES]
+        code = "\n".join(lines)[:EXCERPT_MAX_BYTES]
+        return {
+            "path": path,
+            "language": entry.get("language", ""),
+            "code": code,
+            "line_count": len(lines),
+        }
+    return {}
+
+
+def _looks_generated(path: str) -> bool:
+    lower = path.lower()
+    bad_suffixes = (".min.js", ".min.css", ".lock", ".sum", "_pb.py", "_pb.go")
+    bad_substrings = ("dist/", "build/", "generated/", "__generated__")
+    return any(lower.endswith(s) for s in bad_suffixes) or any(
+        s in lower for s in bad_substrings
+    )
+
+
 def mock_analysis(repo_url: str) -> AnalysisResult:
     """Used when cloning is impossible (e.g., private repo, no network) so the
     rest of the pipeline can still produce a demo video."""
@@ -396,4 +441,18 @@ def mock_analysis(repo_url: str) -> AnalysisResult:
              "description": "Unit and integration tests", "file_count": 12},
         ],
         readme_excerpt="",
+        code_excerpt={
+            "path": "src/index.ts",
+            "language": "TypeScript",
+            "code": (
+                "import { createServer } from \"./server\";\n"
+                "import { loadConfig } from \"./config\";\n\n"
+                "const config = loadConfig();\n"
+                "const server = createServer(config);\n\n"
+                "server.listen(config.port, () => {\n"
+                "  console.log(`listening on :${config.port}`);\n"
+                "});\n"
+            ),
+            "line_count": 8,
+        },
     )
