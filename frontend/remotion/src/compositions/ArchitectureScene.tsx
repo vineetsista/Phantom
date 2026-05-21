@@ -8,13 +8,8 @@ import {
 } from "remotion";
 
 import { BackgroundGrid } from "../components/BackgroundGrid";
-import { CameraMove } from "../components/CameraMove";
-import { FocusGlow } from "../components/FocusGlow";
-import { Particles } from "../components/Particles";
-import { ScanLineReveal } from "../components/ScanLineReveal";
 import { Watermark } from "../components/Watermark";
-import { WireframeGrid } from "../components/WireframeGrid";
-import { SETTLE, pulse } from "../components/motion";
+import { SETTLE } from "../components/motion";
 import { FONT_BODY, FONT_DISPLAY, FONT_MONO } from "../loadFonts";
 import {
   COLORS,
@@ -25,21 +20,30 @@ import {
 } from "../types";
 
 /**
- * Build-the-diagram architecture scene.
+ * Architecture scene — calm, stable, readable.
  *
- * Modules don't all appear at once. Each module's `narration_start_seconds`
- * decides when it scan-lines onto the canvas. Connections draw as SVG
- * paths (strokeDasharray sweep) when the narrator describes them. When
- * narration is currently on a particular module, that module zooms in
- * by 8% with a slight cyan glow; everything else dims and recedes.
+ * After user feedback ("switches frames a lot and moves things out of their
+ * original position too much... too messy") the scene was rewritten to
+ * follow three rules:
  *
- * Layout is a deterministic anchored circle: the first module (the entry
- * point) sits at center; subsequent modules orbit around it on a circle.
- * For repos with too many modules to fit on a single ring, modules
- * 9+ get a second outer ring. Two-ring layout keeps the visual readable.
+ *  1. STABILITY. Module positions are computed ONCE at scene start and
+ *     never change. There is no camera tracking, no zooming toward the
+ *     active module, no repositioning when focus changes.
+ *  2. THREE-REGION LAYOUT. Hard separation between title (y 0-140),
+ *     modules (y 160-880), and footer (y 900-1080). Module placement is
+ *     constrained to its region with a 40 px safety margin from the title
+ *     boundary.
+ *  3. RESTRAINT. One subtle background layer (BackgroundGrid). Static
+ *     1px connection lines in mist gray. No particles, no pulse, no
+ *     wireframe rotation. Only the ACTIVE module gets a cyan border;
+ *     everything else is quiet.
  */
 const FPS = 30;
-const ENTRY_RADIUS_ATTRACTOR = 0;
+
+const TITLE_REGION_BOTTOM = 140;
+const MODULE_REGION_TOP = TITLE_REGION_BOTTOM + 20; // 160
+const FOOTER_REGION_TOP = 880;
+const MIN_MARGIN_FROM_TITLE = 40; // boxes must not get within 40px of the title region
 
 interface Placement {
   x: number;
@@ -65,52 +69,67 @@ export const ArchitectureScene: React.FC<{ section: ScriptSection }> = ({
 
   const modules = (data.modules ?? []).slice(0, 10);
   const connections = data.connections ?? [];
-  const dataFlows = data.data_flows ?? [];
 
-  // Layout regions — explicit, no free positioning. Title gets the top
-  // strip, modules render in the lower region. Reserves a footer strip
-  // for the optional metadata rail.
-  //   title region   y = 70  .. 200
-  //   modules region y = 220 .. height - 140
-  const TITLE_REGION_BOTTOM = 200;
-  const FOOTER_RESERVE = 140;
-
-  // Position each module. Module 0 = centre of the modules region.
-  // Modules 1-6 = inner ring around it. Modules 7+ = outer ring.
-  // Box size shrinks as module count grows so we never collide.
+  // Layout — compute everything ONCE per render. Module 0 (entry point)
+  // anchors at the centre of the module region; the remaining modules
+  // orbit on a single ring sized to fit inside the region with a hard
+  // safety margin from the title boundary.
   const placements = useMemo<Placement[]>(() => {
     const n = modules.length;
-    // Auto-scale boxes when crowded. Cap minimum at 220x96 so labels stay
-    // readable.
-    const boxW = n > 6 ? 240 : 320;
-    const boxH = n > 6 ? 110 : 140;
-    const cx0 = width / 2;
-    const modulesTop = TITLE_REGION_BOTTOM + 20;
-    const modulesBottom = height - FOOTER_RESERVE;
-    const cy0 = (modulesTop + modulesBottom) / 2;
-    // Max radius constrained so module 1 (at theta=-π/2 i.e. top) doesn't
-    // cross into the title region.
-    const maxRadiusFromTop = cy0 - modulesTop - boxH / 2 - 10;
-    const innerR = Math.min(n > 6 ? 320 : 360, maxRadiusFromTop);
-    const outerR = Math.min(560, maxRadiusFromTop + 220);
+    if (n === 0) return [];
+
+    const regionTop = MODULE_REGION_TOP;
+    const regionBottom = FOOTER_REGION_TOP;
+    const regionHeight = regionBottom - regionTop;
+    const regionCenterX = width / 2;
+    const regionCenterY = (regionTop + regionBottom) / 2;
+
+    // Box size scales with module count. Cap minimum at 220×96 for legibility.
+    const baseW = n > 6 ? 240 : 320;
+    const baseH = n > 6 ? 96 : 130;
+
+    // Maximum ring radius constrained so the topmost box (theta = -π/2)
+    // can't land within MIN_MARGIN_FROM_TITLE of the title region.
+    const topConstraint =
+      regionCenterY - regionTop - baseH / 2 - MIN_MARGIN_FROM_TITLE;
+    const bottomConstraint =
+      regionBottom - regionCenterY - baseH / 2 - 20;
+    const sideConstraint = (width - baseW) / 2 - 100;
+    const maxRing = Math.min(topConstraint, bottomConstraint, sideConstraint);
+    // Tighter ring for smaller layouts so the diagram doesn't feel spread out.
+    const ringR = Math.min(n > 6 ? 320 : 360, Math.max(220, maxRing));
+
+    // Final scale factor — if the boxes still wouldn't fit at the chosen
+    // radius and size, shrink everything proportionally.
+    const estimatedSpan = (ringR * 2) + baseH;
+    const scale = estimatedSpan > regionHeight - MIN_MARGIN_FROM_TITLE
+      ? (regionHeight - MIN_MARGIN_FROM_TITLE) / estimatedSpan
+      : 1;
+    const boxW = Math.round(baseW * scale);
+    const boxH = Math.round(baseH * scale);
+    const radius = Math.round(ringR * scale);
+
     return modules.map((_, index) => {
-      if (index === ENTRY_RADIUS_ATTRACTOR) {
+      if (index === 0) {
         return {
-          x: cx0 - boxW / 2,
-          y: cy0 - boxH / 2,
-          cx: cx0,
-          cy: cy0,
+          x: regionCenterX - boxW / 2,
+          y: regionCenterY - boxH / 2,
+          cx: regionCenterX,
+          cy: regionCenterY,
           width: boxW,
           height: boxH,
         };
       }
-      const ringIndex = index <= 6 ? index : index - 6;
-      const ringCount = index <= 6 ? Math.min(n - 1, 6) : Math.max(1, n - 7);
-      const radius = index <= 6 ? innerR : outerR;
-      // -90deg start so module 1 lands at the top
-      const theta = -Math.PI / 2 + (2 * Math.PI * (ringIndex - 1)) / Math.max(1, ringCount);
-      const mx = cx0 + radius * Math.cos(theta);
-      const my = cy0 + radius * Math.sin(theta);
+      const ringCount = n - 1;
+      // -90deg start so module 1 lands at the top of the ring.
+      const theta = -Math.PI / 2 + (2 * Math.PI * (index - 1)) / Math.max(1, ringCount);
+      const mx = regionCenterX + radius * Math.cos(theta);
+      // Vertical clamp — never drop below MODULE_REGION_TOP + boxH/2 + margin.
+      const myUnclamped = regionCenterY + radius * Math.sin(theta);
+      const my = Math.max(
+        regionTop + boxH / 2 + MIN_MARGIN_FROM_TITLE,
+        Math.min(regionBottom - boxH / 2 - 10, myUnclamped),
+      );
       return {
         x: mx - boxW / 2,
         y: my - boxH / 2,
@@ -122,15 +141,15 @@ export const ArchitectureScene: React.FC<{ section: ScriptSection }> = ({
     });
   }, [modules, width, height]);
 
-  // Convert narration_start_seconds to the frame at which a module/connection
-  // begins to appear. Falls back to a sensible default if missing.
+  // Convert narration_start_seconds to the frame at which a module starts
+  // to appear. Boxes use a soft 14-frame fade-in plus a small scale settle
+  // (0.94 → 1.0). NO repositioning, no translation.
   const moduleStartFrames = useMemo(() => {
     return modules.map((m, index) => {
       const s = m.narration_start_seconds;
       if (typeof s === "number" && s >= 0) {
         return Math.max(30, Math.round(s * FPS) + 30);
       }
-      // Default: stagger every 30 frames (~1s), with a 30-frame intro
       return 30 + index * 30;
     });
   }, [modules]);
@@ -146,69 +165,49 @@ export const ArchitectureScene: React.FC<{ section: ScriptSection }> = ({
   }, [connections]);
 
   // Which module is currently "active" — the most recently mentioned one
-  // whose narration_start_seconds is in the past. Drives the zoom + dim.
+  // whose narration_start_seconds is in the past. Drives ONLY the static
+  // cyan border + 100% opacity. No translate, no scale, no pulse.
   const activeIndex = useMemo(() => {
     let active = -1;
     for (let i = 0; i < moduleStartFrames.length; i++) {
-      if (frame >= moduleStartFrames[i] + 12) active = i;
+      if (frame >= moduleStartFrames[i] + 14) active = i;
     }
     return active;
   }, [moduleStartFrames, frame]);
 
-  // Header
-  const titleOpacity = interpolate(frame, [0, 18], [0, 1], { extrapolateRight: "clamp" });
-  const subtitleOpacity = interpolate(frame, [14, 28], [0, 1], { extrapolateRight: "clamp" });
-
-  // Camera zoom toward the active module
-  const activePlacement = activeIndex >= 0 ? placements[activeIndex] : null;
-  const focusZoomTarget = activePlacement
-    ? {
-        scale: 1.08,
-        translateX: (width / 2 - activePlacement.cx) * 0.18,
-        translateY: (height / 2 - activePlacement.cy) * 0.18,
-      }
-    : { scale: 1.0, translateX: 0, translateY: 0 };
-  const zoomSpring = spring({
-    frame: frame - 60,
-    fps,
-    config: { damping: 26, stiffness: 60 },
-  });
-  // Always settle toward the current target. The spring just smooths the
-  // transitions between different active modules.
-  const cameraScale = 1.0 + (focusZoomTarget.scale - 1.0) * zoomSpring;
-  const cameraTx = focusZoomTarget.translateX * zoomSpring;
-  const cameraTy = focusZoomTarget.translateY * zoomSpring;
+  // Header opacities — title comes first, kicker shortly after.
+  const kickerOpacity = interpolate(frame, [4, 22], [0, 1], { extrapolateRight: "clamp" });
+  const titleOpacity = interpolate(frame, [10, 28], [0, 1], { extrapolateRight: "clamp" });
 
   return (
     <AbsoluteFill>
+      {/* Single subtle background — no wireframe, no particles, no glow. */}
       <BackgroundGrid />
-      {/* Perspective wireframe — slow-rotating receding grid behind the
-          diagram. Sells the sense of a 3D space without committing to one. */}
-      <WireframeGrid density={20} intensity={0.05} />
-      <Particles count={20} seed={modules.length * 41 + 1} speed={0.8} />
-      <FocusGlow x={50} y={55} radius={70} intensity={0.07} />
+      {/* Reduce the BackgroundGrid intensity by overlaying a slight darken. */}
+      <AbsoluteFill style={{ background: "rgba(10,10,11,0.35)", pointerEvents: "none" }} />
 
-      {/* Title strip — fixed to the top region; module placements respect
-          its bottom boundary so they can't collide. */}
+      {/* TITLE REGION — y 0 to TITLE_REGION_BOTTOM. Nothing else renders here. */}
       <div
         style={{
           position: "absolute",
-          top: 70,
+          top: 32,
           left: 0,
           right: 0,
           textAlign: "center",
           fontFamily: FONT_DISPLAY,
+          height: TITLE_REGION_BOTTOM - 32,
+          pointerEvents: "none",
         }}
       >
         <div
           style={{
-            opacity: subtitleOpacity,
+            opacity: kickerOpacity,
             fontSize: 12,
             color: COLORS.cyan,
             textTransform: "uppercase",
             fontFamily: FONT_MONO,
             letterSpacing: 6,
-            marginBottom: 12,
+            marginBottom: 10,
           }}
         >
           {(data.hint ?? "modules").toString().toUpperCase()}
@@ -216,377 +215,180 @@ export const ArchitectureScene: React.FC<{ section: ScriptSection }> = ({
         <div
           style={{
             opacity: titleOpacity,
-            fontSize: 56,
+            fontSize: 52,
             fontWeight: 700,
             color: COLORS.text,
             letterSpacing: -1,
+            lineHeight: 1,
           }}
         >
           Architecture
         </div>
       </div>
 
-      <CameraMove pan="left" intensity={0.4}>
-        {/* The zoom layer wraps both the SVG arrows and the module boxes so
-            they zoom together — no parallax between the diagram and its
-            connections. */}
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            transform: `translate3d(${cameraTx}px, ${cameraTy}px, 0) scale(${cameraScale})`,
-            transformOrigin: "50% 55%",
-          }}
+      {/* MODULE REGION — y MODULE_REGION_TOP to FOOTER_REGION_TOP. */}
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          // No camera transform — stability is the rule.
+        }}
+      >
+        {/* Connection layer — static thin mist-gray lines. Drawn once
+            then never animated again. */}
+        <svg
+          width={width}
+          height={height}
+          viewBox={`0 0 ${width} ${height}`}
+          style={{ position: "absolute", inset: 0, pointerEvents: "none" }}
         >
-          {/* SVG connection layer */}
-          <svg
-            width={width}
-            height={height}
-            viewBox={`0 0 ${width} ${height}`}
-            style={{ position: "absolute", inset: 0, pointerEvents: "none" }}
-          >
-            {connections.map((c, i) => {
-              const fromIdx = modules.findIndex((m) => m.id === c.from);
-              const toIdx = modules.findIndex((m) => m.id === c.to);
-              if (fromIdx < 0 || toIdx < 0) return null;
-              const a = placements[fromIdx];
-              const b = placements[toIdx];
-              const startFrame = connectionStartFrames[i];
+          {connections.map((c, i) => {
+            const fromIdx = modules.findIndex((m) => m.id === c.from);
+            const toIdx = modules.findIndex((m) => m.id === c.to);
+            if (fromIdx < 0 || toIdx < 0) return null;
+            const a = placements[fromIdx];
+            const b = placements[toIdx];
+            const startFrame = connectionStartFrames[i];
 
-              // Path = quadratic curve. Control point pulled toward center
-              // so arrows arc rather than cut straight across modules.
-              const midX = (a.cx + b.cx) / 2;
-              const midY = (a.cy + b.cy) / 2;
-              const ctrlPullX = (width / 2 - midX) * 0.25;
-              const ctrlPullY = (height / 2 + 30 - midY) * 0.25;
-              const path = `M ${a.cx} ${a.cy} Q ${midX + ctrlPullX} ${midY + ctrlPullY}, ${b.cx} ${b.cy}`;
+            // Gentle quadratic curve, control point pulled toward region centre.
+            const midX = (a.cx + b.cx) / 2;
+            const midY = (a.cy + b.cy) / 2;
+            const ctrlPullX = (width / 2 - midX) * 0.15;
+            const ctrlPullY =
+              ((MODULE_REGION_TOP + FOOTER_REGION_TOP) / 2 - midY) * 0.15;
+            const path = `M ${a.cx} ${a.cy} Q ${midX + ctrlPullX} ${
+              midY + ctrlPullY
+            }, ${b.cx} ${b.cy}`;
 
-              // Approximate path length (chord length is close enough for
-              // strokeDasharray pacing). Animate the dash offset from full
-              // length to 0 to make the line "draw."
-              const dashLength = Math.max(
-                400,
-                Math.round(Math.hypot(b.cx - a.cx, b.cy - a.cy) * 1.4),
-              );
-              const drawProgress = interpolate(
-                frame,
-                [startFrame, startFrame + 16],
-                [0, 1],
-                { extrapolateLeft: "clamp", extrapolateRight: "clamp" },
-              );
-              const opacity = interpolate(
-                frame,
-                [startFrame, startFrame + 8],
-                [0, 0.55],
-                { extrapolateLeft: "clamp", extrapolateRight: "clamp" },
-              );
-
-              // Whether this connection's endpoints are currently active.
-              // Drives a more energetic particle flow on the wire.
-              const isHot =
-                activeIndex === fromIdx || activeIndex === toIdx;
-              // Particle count: 1 if connection is just drawn,
-              // 2 if drawn for a while, 3 when one end is active.
-              const drawnAgo = Math.max(0, frame - (startFrame + 16));
-              const particleCount = isHot ? 3 : drawProgress >= 1 ? 2 : drawProgress > 0.5 ? 1 : 0;
-              const particleSpeed = isHot ? 0.014 : 0.007; // fraction of path per frame
-              return (
-                <g key={`conn-${i}`}>
-                  <path
-                    d={path}
-                    stroke={COLORS.cyan}
-                    strokeOpacity={opacity}
-                    strokeWidth={isHot ? 2 : 1.5}
-                    strokeDasharray={dashLength}
-                    strokeDashoffset={dashLength * (1 - drawProgress)}
-                    fill="none"
-                    strokeLinecap="round"
-                  />
-                  {/* Arrowhead at the destination, fading in once the path
-                      finishes drawing. */}
-                  {drawProgress > 0.85 && (
-                    <circle
-                      cx={b.cx}
-                      cy={b.cy}
-                      r={4}
-                      fill={COLORS.cyan}
-                      opacity={(drawProgress - 0.85) / 0.15}
-                    />
-                  )}
-                  {/* Data particles drifting along the connection. Each
-                      particle's position is a fraction-of-path computed
-                      from the frame, modulo 1, with a per-particle phase
-                      offset. When endpoint is "hot", particles move faster
-                      and there are more of them. */}
-                  {Array.from({ length: particleCount }).map((_, p) => {
-                    const phase = p / particleCount;
-                    const t = ((drawnAgo * particleSpeed) + phase) % 1;
-                    // Approximate point on the quadratic Bezier
-                    const u = 1 - t;
-                    const cx = u * u * a.cx
-                      + 2 * u * t * (midX + ctrlPullX)
-                      + t * t * b.cx;
-                    const cy = u * u * a.cy
-                      + 2 * u * t * (midY + ctrlPullY)
-                      + t * t * b.cy;
-                    return (
-                      <circle
-                        key={`p${p}`}
-                        cx={cx}
-                        cy={cy}
-                        r={isHot ? 3 : 2}
-                        fill={COLORS.cyan}
-                        opacity={isHot ? 0.95 : 0.55}
-                        style={{ filter: isHot ? `drop-shadow(0 0 6px ${COLORS.cyan})` : undefined }}
-                      />
-                    );
-                  })}
-                </g>
-              );
-            })}
-
-            {/* Data-flow particle traces — small dots travel along chained
-                paths in sequence when the narrator describes a flow. */}
-            {dataFlows.map((flow, i) => {
-              const flowStart = flow.narration_seconds
-                ? Math.round(flow.narration_seconds * FPS) + 30
-                : 120 + i * 30;
-              return flow.path.slice(0, -1).map((fromId, j) => {
-                const toId = flow.path[j + 1];
-                const fromIdx = modules.findIndex((m) => m.id === fromId);
-                const toIdx = modules.findIndex((m) => m.id === toId);
-                if (fromIdx < 0 || toIdx < 0) return null;
-                const a = placements[fromIdx];
-                const b = placements[toIdx];
-                const segStart = flowStart + j * 12;
-                const segProgress = interpolate(
-                  frame,
-                  [segStart, segStart + 20],
-                  [0, 1],
-                  { extrapolateLeft: "clamp", extrapolateRight: "clamp" },
-                );
-                const px = a.cx + (b.cx - a.cx) * segProgress;
-                const py = a.cy + (b.cy - a.cy) * segProgress;
-                const dotOpacity = interpolate(
-                  frame,
-                  [segStart, segStart + 4, segStart + 16, segStart + 20],
-                  [0, 1, 1, 0],
-                  { extrapolateLeft: "clamp", extrapolateRight: "clamp" },
-                );
-                return (
-                  <circle
-                    key={`flow-${i}-${j}`}
-                    cx={px}
-                    cy={py}
-                    r={5}
-                    fill={COLORS.cyan}
-                    opacity={dotOpacity}
-                    style={{ filter: `drop-shadow(0 0 8px ${COLORS.cyan})` }}
-                  />
-                );
-              });
-            })}
-          </svg>
-
-          {/* Module boxes */}
-          {modules.map((module, index) => {
-            const place = placements[index];
-            const start = moduleStartFrames[index];
-            const enter = spring({
-              frame: frame - start,
-              fps,
-              config: SETTLE,
-            });
-            const isActive = activeIndex === index;
-            const isAfterEntry = frame >= start + 12;
-            const pulseScale = isActive && isAfterEntry ? pulse(frame, fps) : 1;
-            const baseOpacity = interpolate(enter, [0, 1], [0, 1]);
-            const dim = isActive
-              ? 1
-              : activeIndex >= 0 && isAfterEntry
-                ? 0.55
-                : baseOpacity;
-            const opacity = isAfterEntry ? dim : baseOpacity;
-            const liftScale = isActive ? 1.06 : 1;
-            const id = module.id || module.name || `m${index}`;
-            const label = module.label || module.name || id;
-            const filePath = module.file_path || "";
-
+            const dashLength = Math.max(
+              400,
+              Math.round(Math.hypot(b.cx - a.cx, b.cy - a.cy) * 1.4),
+            );
+            const drawProgress = interpolate(
+              frame,
+              [startFrame, startFrame + 24],
+              [0, 1],
+              { extrapolateLeft: "clamp", extrapolateRight: "clamp" },
+            );
             return (
-              <div
-                key={id + index}
-                style={{
-                  position: "absolute",
-                  left: place.x,
-                  top: place.y,
-                  width: place.width,
-                  height: place.height,
-                  opacity,
-                  transform: `scale(${liftScale * pulseScale})`,
-                  transformOrigin: "center center",
-                  zIndex: isActive ? 5 : 2,
-                }}
-              >
-                <ScanLineReveal startFrame={start} durationFrames={14} height={place.height}>
-                  <div
-                    style={{
-                      width: place.width,
-                      height: place.height,
-                      borderRadius: 18,
-                      padding: "16px 22px",
-                      background: "rgba(20,20,28,0.9)",
-                      border: `1px solid ${isActive ? COLORS.cyan : "rgba(255,255,255,0.12)"}`,
-                      boxShadow: isActive
-                        ? `0 0 48px -8px ${COLORS.cyan}, inset 0 0 0 1px rgba(0,240,255,0.16)`
-                        : `0 0 24px -16px rgba(0,0,0,0.6)`,
-                      fontFamily: FONT_BODY,
-                      color: COLORS.text,
-                      display: "flex",
-                      flexDirection: "column",
-                      justifyContent: "center",
-                      boxSizing: "border-box",
-                    }}
-                  >
-                    <div
-                      style={{
-                        fontFamily: FONT_DISPLAY,
-                        fontSize: 24,
-                        fontWeight: 700,
-                        color: isActive ? COLORS.text : "rgba(245,245,240,0.9)",
-                        lineHeight: 1.1,
-                      }}
-                    >
-                      {label}
-                    </div>
-                    {filePath && (
-                      <div
-                        style={{
-                          marginTop: 8,
-                          fontFamily: FONT_MONO,
-                          fontSize: 13,
-                          color: isActive
-                            ? COLORS.cyan
-                            : "rgba(245,245,240,0.45)",
-                          letterSpacing: 0.5,
-                          // Subtle pulse on the file-path when this module is
-                          // the active one. Tied to the same pulse helper so
-                          // the box and its file path breathe in sync.
-                          opacity: isActive ? 0.6 + 0.4 * (pulseScale - 1) * 50 : 1,
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {filePath}
-                      </div>
-                    )}
-                    {module.role && (
-                      <div
-                        style={{
-                          marginTop: 6,
-                          fontSize: 14,
-                          color: "rgba(245,245,240,0.55)",
-                        }}
-                      >
-                        {module.role}
-                      </div>
-                    )}
-                  </div>
-                </ScanLineReveal>
-              </div>
+              <path
+                key={`conn-${i}`}
+                d={path}
+                stroke="rgba(245,245,240,0.18)"
+                strokeOpacity={0.5}
+                strokeWidth={1}
+                strokeDasharray={dashLength}
+                strokeDashoffset={dashLength * (1 - drawProgress)}
+                fill="none"
+                strokeLinecap="round"
+              />
             );
           })}
-        </div>
-      </CameraMove>
+        </svg>
 
-      {/* Metadata rail — slides up from the bottom whenever a module is
-          active. Shows the file path of the active module plus an
-          "ACTIVE" badge. Lives outside the CameraMove so it stays put as
-          the diagram zooms. */}
-      <MetadataRail
-        activeModule={activeIndex >= 0 ? modules[activeIndex] : null}
-        frame={frame}
-      />
+        {/* Module boxes — appear in place, never move. */}
+        {modules.map((module, index) => {
+          const place = placements[index];
+          const start = moduleStartFrames[index];
+          // Soft enter: 14-frame fade + small scale settle from 0.94 → 1.0.
+          // Spring with high damping so it doesn't overshoot.
+          const enter = spring({
+            frame: frame - start,
+            fps,
+            config: { damping: 26, stiffness: 90 },
+          });
+          const enterScale = interpolate(enter, [0, 1], [0.94, 1.0]);
+          const enterOpacity = interpolate(enter, [0, 1], [0, 1]);
 
+          const isAfterEntry = frame >= start + 14;
+          const isActive = activeIndex === index && isAfterEntry;
+
+          // Dim non-active modules to 30% once SOMETHING is active, but
+          // only after THIS module has entered. No transition animations
+          // — opacity changes are driven by the React interpolate the same
+          // way the underline appears.
+          let opacity = enterOpacity;
+          if (isAfterEntry) {
+            opacity = isActive
+              ? 1
+              : activeIndex >= 0
+                ? 0.30
+                : 1;
+          }
+
+          const id = module.id || module.name || `m${index}`;
+          const label = module.label || module.name || id;
+          const filePath = module.file_path || "";
+
+          return (
+            <div
+              key={id + index}
+              style={{
+                position: "absolute",
+                left: place.x,
+                top: place.y,
+                width: place.width,
+                height: place.height,
+                opacity,
+                transform: `scale(${enterScale})`,
+                transformOrigin: "center center",
+                zIndex: isActive ? 5 : 2,
+              }}
+            >
+              <div
+                style={{
+                  width: place.width,
+                  height: place.height,
+                  borderRadius: 14,
+                  padding: "14px 20px",
+                  background: "rgba(20,20,28,0.92)",
+                  border: `1px solid ${isActive ? COLORS.cyan : "rgba(255,255,255,0.10)"}`,
+                  boxShadow: isActive
+                    ? `0 0 24px -8px ${COLORS.cyan}55`
+                    : "none",
+                  fontFamily: FONT_BODY,
+                  color: COLORS.text,
+                  display: "flex",
+                  flexDirection: "column",
+                  justifyContent: "center",
+                  boxSizing: "border-box",
+                }}
+              >
+                <div
+                  style={{
+                    fontFamily: FONT_DISPLAY,
+                    fontSize: 22,
+                    fontWeight: 700,
+                    color: COLORS.text,
+                    lineHeight: 1.1,
+                  }}
+                >
+                  {label}
+                </div>
+                {filePath && (
+                  <div
+                    style={{
+                      marginTop: 6,
+                      fontFamily: FONT_MONO,
+                      fontSize: 12,
+                      color: "rgba(245,245,240,0.5)",
+                      letterSpacing: 0.4,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {filePath}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* FOOTER REGION — only the watermark lives here. */}
       <Watermark />
     </AbsoluteFill>
-  );
-};
-
-const MetadataRail: React.FC<{
-  activeModule: ScriptModule | null;
-  frame: number;
-}> = ({ activeModule, frame }) => {
-  // Drive entrance/exit via opacity + Y translate. When a new module
-  // becomes active, slide up. When activeModule becomes null (idle), slide
-  // back down. We can't easily detect transitions in a pure-render
-  // function, so we always render and animate based on whether activeModule
-  // is non-null at the current frame.
-  if (!activeModule) return null;
-  const label = activeModule.label || activeModule.name || "";
-  const filePath = activeModule.file_path || "";
-  return (
-    <div
-      style={{
-        position: "absolute",
-        left: 80,
-        right: 80,
-        bottom: 50,
-        height: 64,
-        display: "flex",
-        alignItems: "center",
-        gap: 24,
-        padding: "0 28px",
-        background: "rgba(17,17,24,0.78)",
-        border: "1px solid rgba(0,240,255,0.22)",
-        borderRadius: 14,
-        backdropFilter: "blur(8px)",
-        boxShadow: `0 0 32px -16px ${COLORS.cyan}55`,
-      }}
-    >
-      <div
-        style={{
-          width: 8,
-          height: 8,
-          borderRadius: "50%",
-          background: COLORS.cyan,
-          boxShadow: `0 0 12px ${COLORS.cyan}`,
-          opacity: 0.4 + 0.6 * (0.5 - 0.5 * Math.cos((frame / 30) * Math.PI * 0.8)),
-        }}
-      />
-      <div
-        style={{
-          fontFamily: FONT_MONO,
-          fontSize: 11,
-          letterSpacing: 4,
-          textTransform: "uppercase",
-          color: COLORS.cyan,
-        }}
-      >
-        Active
-      </div>
-      <div
-        style={{
-          fontFamily: FONT_DISPLAY,
-          fontSize: 22,
-          fontWeight: 700,
-          color: COLORS.text,
-        }}
-      >
-        {label}
-      </div>
-      {filePath && (
-        <div
-          style={{
-            fontFamily: FONT_MONO,
-            fontSize: 13,
-            color: "rgba(245,245,240,0.55)",
-            marginLeft: "auto",
-          }}
-        >
-          {filePath}
-        </div>
-      )}
-    </div>
   );
 };
