@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { VideoPlayer, type Chapter } from "@/components/video/VideoPlayer";
 import { getVideo, type VideoRecord } from "@/lib/api";
 import { track } from "@/lib/analytics";
+import { sectionStartTimes } from "@/lib/utils";
 
 /**
  * Bare iframe-friendly player. Loaded by:
@@ -55,12 +56,13 @@ export default function EmbedPage() {
     );
   }
 
-  let cursor = 0;
-  const chapters: Chapter[] = (video.script_data?.sections ?? []).map((section) => {
-    const start = cursor;
-    cursor += section.duration_seconds || 10;
-    return { id: section.id, start, label: humanizeSection(section.id) };
-  });
+  const chapters: Chapter[] = sectionStartTimes(
+    video.script_data?.sections ?? [],
+  ).map(({ id, startSeconds }) => ({
+    id,
+    start: startSeconds,
+    label: humanizeSection(id),
+  }));
 
   return (
     <div className="relative min-h-screen bg-void p-2 md:p-4">

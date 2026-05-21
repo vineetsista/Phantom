@@ -10,7 +10,7 @@ import { EmbedModal } from "@/components/video/EmbedModal";
 import { ShareModal } from "@/components/video/ShareModal";
 import { VideoPlayer, type Chapter } from "@/components/video/VideoPlayer";
 import { getVideo, startGeneration, type VideoRecord } from "@/lib/api";
-import { formatDuration } from "@/lib/utils";
+import { formatDuration, sectionStartTimes } from "@/lib/utils";
 
 export default function VideoPage() {
   const params = useParams<{ id: string }>();
@@ -33,12 +33,15 @@ export default function VideoPage() {
 
   const chapters: Chapter[] = useMemo(() => {
     if (!video?.script_data?.sections) return [];
-    let cursor = 0;
-    return video.script_data.sections.map((section) => {
-      const start = cursor;
-      cursor += section.duration_seconds || 10;
-      return { id: section.id, start, label: humanizeSection(section.id) };
-    });
+    // sectionStartTimes mirrors the Remotion Sequence placement math exactly
+    // (audio_duration + 1.0s buffer per scene, − 0.3s per scene-to-scene
+    // crossfade). The previous chapter logic used the pre-voice estimate
+    // and was off by ~25-30s per chapter once Problem 1 landed.
+    return sectionStartTimes(video.script_data.sections).map(({ id, startSeconds }) => ({
+      id,
+      start: startSeconds,
+      label: humanizeSection(id),
+    }));
   }, [video]);
 
   if (error) {
