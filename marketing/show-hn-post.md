@@ -25,7 +25,7 @@ Source: https://github.com/vsista/phantom
 How it works under the hood:
 
 1. Shallow-clone the repo into ephemeral storage.
-2. Walk the file tree — language stats, entry points, config files, module roles. AST-parse Python; regex-derived heuristics for everything else (works for 12+ languages).
+2. Walk the file tree — language stats, entry points, config files, module roles. Extension + filename + config-file heuristics across 12+ languages (no AST parsing yet — that's next).
 3. Send the structured analysis to Claude (Sonnet 4.5) with a strict JSON schema. Claude returns the narration script broken into scenes — intro, architecture, code walkthrough, summary.
 4. Generate per-section voiceover with OpenAI TTS (or ElevenLabs for the premium voice).
 5. Render the scenes with Remotion (React-based programmatic video). Each scene is a React component that reads the script JSON as props and animates with Framer Motion patterns.
