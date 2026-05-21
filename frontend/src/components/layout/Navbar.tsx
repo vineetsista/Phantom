@@ -18,6 +18,9 @@ export function Navbar() {
   const pathname = usePathname();
   const [scrolled, setScrolled] = useState(false);
 
+  // Embed surfaces render inside other people's iframes — no chrome.
+  if (pathname?.startsWith("/embed")) return null;
+
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 8);
     onScroll();

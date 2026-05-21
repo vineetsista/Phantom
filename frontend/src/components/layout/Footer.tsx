@@ -1,4 +1,7 @@
+"use client";
+
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 
 import { Logo } from "@/components/shared/Logo";
 
@@ -33,6 +36,9 @@ const columns = [
 ];
 
 export function Footer() {
+  const pathname = usePathname();
+  if (pathname?.startsWith("/embed")) return null;
+
   return (
     <footer className="mt-48 border-t border-white/[0.06] bg-void">
       <div className="mx-auto max-w-[1280px] px-6 py-24">
