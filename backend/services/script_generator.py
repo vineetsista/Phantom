@@ -782,11 +782,13 @@ def _normalize(script: dict[str, Any], analysis: AnalysisResult) -> dict[str, An
     if code is not None:
         excerpt = analysis.code_excerpt or {}
         code_text = excerpt.get("code", "")
-        # Defense in depth: log if Claude ever returned its own `code` value
-        # that doesn't match the analyzer's. The overwrite below makes this
-        # log-only — the rendered code is always the verbatim excerpt — but
-        # the log surface lets us spot prompt regressions.
-        claude_code = (code.get("visuals", {}) or {}).get("data", {}).get("code")
+        excerpt_lines = code_text.replace("\r", "").splitlines()
+        claude_data = (code.get("visuals", {}) or {}).get("data", {}) or {}
+
+        # Defense in depth on code body: log if Claude returned its own
+        # `code` value that's not a substring of the analyzer excerpt.
+        # The overwrite below makes the rendered code verbatim regardless.
+        claude_code = claude_data.get("code")
         if claude_code and isinstance(claude_code, str) and claude_code.strip():
             if claude_code.strip() not in code_text.replace("\r", ""):
                 logger.warning(
@@ -794,13 +796,96 @@ def _normalize(script: dict[str, Any], analysis: AnalysisResult) -> dict[str, An
                     "(len=%d). Overriding with analyzer excerpt (len=%d).",
                     len(claude_code), len(code_text),
                 )
+
+        # Validate Claude's highlights array. Each highlight's `code`
+        # string must appear verbatim in the analyzer excerpt at the
+        # claimed line number (or close to it — Claude sometimes off-by-
+        # ones). Drop any highlight that fails. Enforce EXACTLY ONE
+        # punchline; if Claude marked zero or multiple, fix it here.
+        raw_highlights = claude_data.get("highlights") or []
+        validated_highlights: list[dict[str, Any]] = []
+        for h in raw_highlights:
+            if not isinstance(h, dict):
+                continue
+            line_no = h.get("line_number")
+            line_text = (h.get("code") or "").strip()
+            if not isinstance(line_no, int) or line_no < 1:
+                continue
+            # The claimed line, if it exists. Otherwise we'll skip.
+            if line_no > len(excerpt_lines):
+                logger.info(
+                    "Dropping highlight: line_number %d exceeds excerpt (%d lines)",
+                    line_no, len(excerpt_lines),
+                )
+                continue
+            actual = excerpt_lines[line_no - 1].strip()
+            if not line_text:
+                # No text supplied — accept and fill from the excerpt.
+                h["code"] = actual
+            elif line_text not in actual and actual not in line_text:
+                # Hard mismatch — Claude invented the line text. Drop.
+                logger.warning(
+                    "Dropping highlight: line %d text mismatch. "
+                    "Claude=%r excerpt=%r",
+                    line_no, line_text[:60], actual[:60],
+                )
+                continue
+            else:
+                h["code"] = actual
+            validated_highlights.append(h)
+
+        # Exactly one punchline. Promote the first emphasis line, or the
+        # first highlight, if none was marked.
+        punchlines = [h for h in validated_highlights if h.get("punchline")]
+        if len(punchlines) > 1:
+            # Keep the first, demote the rest to plain emphasis.
+            for h in punchlines[1:]:
+                h["punchline"] = False
+                h["emphasis"] = True
+        elif not punchlines and validated_highlights:
+            promoted = next(
+                (h for h in validated_highlights if h.get("emphasis")),
+                validated_highlights[0],
+            )
+            promoted["punchline"] = True
+
+        # If validation ate too many highlights, synthesize from the
+        # heuristic so the scene still has structure.
+        if len(validated_highlights) < 2:
+            heuristic = _heuristic_highlight_lines(code_text)
+            existing_lines = {h["line_number"] for h in validated_highlights}
+            for i, ln in enumerate(heuristic):
+                if ln in existing_lines:
+                    continue
+                validated_highlights.append({
+                    "line_number": ln,
+                    "code": excerpt_lines[ln - 1] if ln <= len(excerpt_lines) else "",
+                    "narration_start_seconds": (i + 1) * 6.0,
+                    "emphasis": i == 0,
+                    "punchline": False,
+                    "annotation": "",
+                })
+            # If we synthesised everything, the first one becomes the punchline.
+            if validated_highlights and not any(h.get("punchline") for h in validated_highlights):
+                validated_highlights[0]["punchline"] = True
+                validated_highlights[0]["emphasis"] = True
+
+        # Sanitize cross_references — keep only those with full required keys.
+        for h in validated_highlights:
+            xref = h.get("cross_reference")
+            if not isinstance(xref, dict) or not xref.get("to_file"):
+                h.pop("cross_reference", None)
+
         code["visuals"] = {
             "type": "code_highlight",
             "data": {
                 "code": code_text,
                 "path": excerpt.get("path", ""),
                 "language": excerpt.get("language", ""),
-                "highlight_lines": _heuristic_highlight_lines(code_text),
+                "highlights": validated_highlights,
+                # Legacy field — keep for backwards compatibility with any
+                # consumer that hasn't been upgraded.
+                "highlight_lines": [h["line_number"] for h in validated_highlights],
                 "files": analysis.top_files[:3],
             },
         }
