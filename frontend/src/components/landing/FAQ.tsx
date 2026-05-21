@@ -19,7 +19,7 @@ const items = [
   },
   {
     q: "Can I use private repositories?",
-    a: "Yes — you'll need to provide a GitHub personal access token with read access. Tokens are encrypted at rest and never logged. Repos are cloned to ephemeral storage and deleted immediately after the video renders.",
+    a: "Not yet — private repo support is the next thing shipping. Public repos work today. When private lands, your GitHub personal access token will be encrypted at rest, scoped to read-only, and used once per generation. Tokens will never be logged. Repos are cloned to ephemeral storage and deleted the moment the video renders.",
   },
   {
     q: "Who owns the video?",

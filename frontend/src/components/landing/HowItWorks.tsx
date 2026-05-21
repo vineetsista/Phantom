@@ -6,7 +6,7 @@ const steps = [
   {
     n: "01",
     title: "Paste",
-    body: "Drop any GitHub URL. Public or private with token.",
+    body: "Drop any public GitHub URL. Private repo support is next.",
     align: "left",
     rotate: -1.2,
     delay: 0,
