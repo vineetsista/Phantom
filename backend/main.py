@@ -70,5 +70,8 @@ def root() -> dict:
 
 
 @app.get("/healthz")
-def healthz() -> dict:
+@app.get("/health")
+def health() -> dict:
+    """Health check. Mounted at /healthz (Kubernetes-style) and /health
+    (Railway / Render / Fly default)."""
     return {"status": "ok"}

@@ -1,0 +1,59 @@
+# Railway deploy config for the Phantom backend.
+#
+# This defines two services that share the same Dockerfile but run different
+# commands. In the Railway UI: create a new service per [[services]] entry, set
+# Root Directory = `backend`, and Railway picks up this file.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+# Default deploy settings inherited by both services unless overridden.
+[deploy]
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
+numReplicas = 1
+
+# -----------------------------------------------------------------------------
+# Service 1 — API
+#   HTTP server. Public endpoint, healthchecked, scales independently.
+# -----------------------------------------------------------------------------
+[[services]]
+name = "phantom-api"
+
+[services.deploy]
+startCommand = "uvicorn main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*'"
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+
+# -----------------------------------------------------------------------------
+# Service 2 — Celery worker
+#   No HTTP port. Concurrency tuned for CPU-bound repo analysis.
+# -----------------------------------------------------------------------------
+[[services]]
+name = "phantom-worker"
+
+[services.deploy]
+startCommand = "celery -A workers.celery_app worker --loglevel=info --concurrency=2 --max-tasks-per-child=20"
+# Workers have no HTTP endpoint to healthcheck.
+
+# -----------------------------------------------------------------------------
+# Required env vars (set in Railway UI · same for both services unless noted):
+#
+#   ANTHROPIC_API_KEY           Claude — script generation
+#   OPENAI_API_KEY              OpenAI TTS — voiceover
+#   ELEVENLABS_API_KEY          (optional) premium voice
+#   GITHUB_TOKEN                (optional) raises rate limit 60 → 5000 /hr
+#   DATABASE_URL                Supabase / Railway Postgres pooler URL
+#   REDIS_URL                   Upstash (rediss://) — broker + result backend
+#   CELERY_BROKER_URL           same as REDIS_URL
+#   CELERY_RESULT_BACKEND       same as REDIS_URL
+#   APP_URL                     https://phantom.video
+#   API_URL                     https://api.phantom.video
+#   SECRET_KEY                  openssl rand -hex 32
+#   VIDEO_OUTPUT_DIR            /tmp/videos (ephemeral) or R2-backed mount
+#   THUMBNAIL_OUTPUT_DIR        /tmp/thumbnails
+#   TEMP_DIR                    /tmp/phantom
+#   REPOS_DIR                   /tmp/repos
+#   R2_ACCOUNT_ID etc.          for Cloudflare R2 video storage
+# -----------------------------------------------------------------------------

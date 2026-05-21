@@ -10,7 +10,8 @@
       "Bash(python -c \"import reportlab; print\\('reportlab', reportlab.__version__\\)\")",
       "Bash(node --check scripts/build-pitch-deck.js)",
       "Bash(python scripts/build-onepager.py)",
-      "Bash(python scripts/build-lead-magnet.py)"
+      "Bash(python scripts/build-lead-magnet.py)",
+      "Bash(python -c \"import json; json.load\\(open\\('frontend/vercel.json'\\)\\); print\\('vercel.json OK'\\)\")"
     ]
   }
 }

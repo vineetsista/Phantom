@@ -1,0 +1,33 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "buildCommand": "npm run build",
+  "installCommand": "npm install",
+  "devCommand": "npm run dev",
+  "regions": ["iad1"],
+  "github": {
+    "silent": true
+  },
+  "headers": [
+    {
+      "source": "/api/og(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=86400, s-maxage=31536000, immutable" }
+      ]
+    },
+    {
+      "source": "/(.*)\\.(woff2|woff|ttf|otf)",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+      ]
+    }
+  ],
+  "redirects": [],
+  "rewrites": [],
+  "env": {
+    "NEXT_PUBLIC_APP_URL": "@phantom-app-url",
+    "NEXT_PUBLIC_API_URL": "@phantom-api-url",
+    "NEXT_PUBLIC_ADMIN_PASSWORD": "@phantom-admin-password",
+    "NEXT_PUBLIC_POSTHOG_KEY": "@phantom-posthog-key"
+  }
+}
