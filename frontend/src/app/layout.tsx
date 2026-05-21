@@ -3,6 +3,7 @@ import type { Metadata, Viewport } from "next";
 import { Footer } from "@/components/layout/Footer";
 import { Navbar } from "@/components/layout/Navbar";
 import { CursorFollower } from "@/components/shared/CursorFollower";
+import { ExitIntentPopup } from "@/components/shared/ExitIntentPopup";
 import { GrainOverlay } from "@/components/shared/GrainOverlay";
 import { PageTransition } from "@/components/shared/PageTransition";
 import "@/styles/globals.css";
@@ -68,6 +69,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <PageTransition>{children}</PageTransition>
         </main>
         <Footer />
+        <ExitIntentPopup />
       </body>
     </html>
   );
