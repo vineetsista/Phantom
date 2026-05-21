@@ -65,3 +65,16 @@ Deferred — each is scope-shaped enough to warrant its own commit:
 All of these are independently shippable. Pick by user impact, not by
 order listed.
 
+
+## From v4 craft pass
+
+- **Architecture mini-map.** Top-right "you are here" mini-map of all
+  modules + camera frustum. Shape: 240×140 rounded rect, scaled-down
+  silhouette of placements with a pulsing dot on the active module.
+- **Camera-language hints.** script_generator emits camera_direction
+  hints (pull-back / push-in / pan / rotate) per narration beat;
+  ArchitectureScene honours them instead of just tracking the active
+  module's centre.
+- **Code walkthrough "result bubbles".** Floating "→ value" bubbles
+  after function-call lines. Adds highlights[].result_value to the
+  schema; renderer pops a small bubble below the line.

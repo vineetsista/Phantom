@@ -13,6 +13,7 @@ import { FocusGlow } from "../components/FocusGlow";
 import { Particles } from "../components/Particles";
 import { ScanLineReveal } from "../components/ScanLineReveal";
 import { Watermark } from "../components/Watermark";
+import { WireframeGrid } from "../components/WireframeGrid";
 import { SETTLE, pulse } from "../components/motion";
 import { FONT_BODY, FONT_DISPLAY, FONT_MONO } from "../loadFonts";
 import {
@@ -181,6 +182,9 @@ export const ArchitectureScene: React.FC<{ section: ScriptSection }> = ({
   return (
     <AbsoluteFill>
       <BackgroundGrid />
+      {/* Perspective wireframe — slow-rotating receding grid behind the
+          diagram. Sells the sense of a 3D space without committing to one. */}
+      <WireframeGrid density={20} intensity={0.05} />
       <Particles count={20} seed={modules.length * 41 + 1} speed={0.8} />
       <FocusGlow x={50} y={55} radius={70} intensity={0.07} />
 
@@ -277,13 +281,22 @@ export const ArchitectureScene: React.FC<{ section: ScriptSection }> = ({
                 { extrapolateLeft: "clamp", extrapolateRight: "clamp" },
               );
 
+              // Whether this connection's endpoints are currently active.
+              // Drives a more energetic particle flow on the wire.
+              const isHot =
+                activeIndex === fromIdx || activeIndex === toIdx;
+              // Particle count: 1 if connection is just drawn,
+              // 2 if drawn for a while, 3 when one end is active.
+              const drawnAgo = Math.max(0, frame - (startFrame + 16));
+              const particleCount = isHot ? 3 : drawProgress >= 1 ? 2 : drawProgress > 0.5 ? 1 : 0;
+              const particleSpeed = isHot ? 0.014 : 0.007; // fraction of path per frame
               return (
                 <g key={`conn-${i}`}>
                   <path
                     d={path}
                     stroke={COLORS.cyan}
                     strokeOpacity={opacity}
-                    strokeWidth={1.5}
+                    strokeWidth={isHot ? 2 : 1.5}
                     strokeDasharray={dashLength}
                     strokeDashoffset={dashLength * (1 - drawProgress)}
                     fill="none"
@@ -300,6 +313,34 @@ export const ArchitectureScene: React.FC<{ section: ScriptSection }> = ({
                       opacity={(drawProgress - 0.85) / 0.15}
                     />
                   )}
+                  {/* Data particles drifting along the connection. Each
+                      particle's position is a fraction-of-path computed
+                      from the frame, modulo 1, with a per-particle phase
+                      offset. When endpoint is "hot", particles move faster
+                      and there are more of them. */}
+                  {Array.from({ length: particleCount }).map((_, p) => {
+                    const phase = p / particleCount;
+                    const t = ((drawnAgo * particleSpeed) + phase) % 1;
+                    // Approximate point on the quadratic Bezier
+                    const u = 1 - t;
+                    const cx = u * u * a.cx
+                      + 2 * u * t * (midX + ctrlPullX)
+                      + t * t * b.cx;
+                    const cy = u * u * a.cy
+                      + 2 * u * t * (midY + ctrlPullY)
+                      + t * t * b.cy;
+                    return (
+                      <circle
+                        key={`p${p}`}
+                        cx={cx}
+                        cy={cy}
+                        r={isHot ? 3 : 2}
+                        fill={COLORS.cyan}
+                        opacity={isHot ? 0.95 : 0.55}
+                        style={{ filter: isHot ? `drop-shadow(0 0 6px ${COLORS.cyan})` : undefined }}
+                      />
+                    );
+                  })}
                 </g>
               );
             })}
@@ -458,7 +499,94 @@ export const ArchitectureScene: React.FC<{ section: ScriptSection }> = ({
         </div>
       </CameraMove>
 
+      {/* Metadata rail — slides up from the bottom whenever a module is
+          active. Shows the file path of the active module plus an
+          "ACTIVE" badge. Lives outside the CameraMove so it stays put as
+          the diagram zooms. */}
+      <MetadataRail
+        activeModule={activeIndex >= 0 ? modules[activeIndex] : null}
+        frame={frame}
+      />
+
       <Watermark />
     </AbsoluteFill>
+  );
+};
+
+const MetadataRail: React.FC<{
+  activeModule: ScriptModule | null;
+  frame: number;
+}> = ({ activeModule, frame }) => {
+  // Drive entrance/exit via opacity + Y translate. When a new module
+  // becomes active, slide up. When activeModule becomes null (idle), slide
+  // back down. We can't easily detect transitions in a pure-render
+  // function, so we always render and animate based on whether activeModule
+  // is non-null at the current frame.
+  if (!activeModule) return null;
+  const label = activeModule.label || activeModule.name || "";
+  const filePath = activeModule.file_path || "";
+  return (
+    <div
+      style={{
+        position: "absolute",
+        left: 80,
+        right: 80,
+        bottom: 50,
+        height: 64,
+        display: "flex",
+        alignItems: "center",
+        gap: 24,
+        padding: "0 28px",
+        background: "rgba(17,17,24,0.78)",
+        border: "1px solid rgba(0,240,255,0.22)",
+        borderRadius: 14,
+        backdropFilter: "blur(8px)",
+        boxShadow: `0 0 32px -16px ${COLORS.cyan}55`,
+      }}
+    >
+      <div
+        style={{
+          width: 8,
+          height: 8,
+          borderRadius: "50%",
+          background: COLORS.cyan,
+          boxShadow: `0 0 12px ${COLORS.cyan}`,
+          opacity: 0.4 + 0.6 * (0.5 - 0.5 * Math.cos((frame / 30) * Math.PI * 0.8)),
+        }}
+      />
+      <div
+        style={{
+          fontFamily: FONT_MONO,
+          fontSize: 11,
+          letterSpacing: 4,
+          textTransform: "uppercase",
+          color: COLORS.cyan,
+        }}
+      >
+        Active
+      </div>
+      <div
+        style={{
+          fontFamily: FONT_DISPLAY,
+          fontSize: 22,
+          fontWeight: 700,
+          color: COLORS.text,
+        }}
+      >
+        {label}
+      </div>
+      {filePath && (
+        <div
+          style={{
+            fontFamily: FONT_MONO,
+            fontSize: 13,
+            color: "rgba(245,245,240,0.55)",
+            marginLeft: "auto",
+          }}
+        >
+          {filePath}
+        </div>
+      )}
+    </div>
   );
 };
