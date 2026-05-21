@@ -32,18 +32,29 @@ from config import get_settings
 logger = logging.getLogger(__name__)
 
 # --- Voice tuning ----------------------------------------------------------
-# Settings tuned for tech narration. Stability 0.30 (down from 0.40) lets the
-# voice "lean in" more on emphasis — flat sentences felt flat at 0.40. Style
-# 0.35 (up from 0.20) brings noticeable personality without going theatrical.
-# Similarity_boost 0.80 (up from 0.75) keeps the speaker identity tight across
-# long-form narration where lower stability would otherwise drift.
-# See VOICE_AB_TEST.md for the three-combo comparison and reasoning.
+# Settings tuned for tech narration after a real-world bug: the previous
+# config (stability 0.30 / style 0.35 / multilingual_v2) sometimes
+# hallucinated a language switch mid-sentence. The fix is on three axes:
+#
+#   stability   0.30 → 0.45   (less wild variation, no drift mid-sentence)
+#   style       0.35 → 0.15   (low style + language_code=en avoids the
+#                              language-switching hallucination)
+#   model       turbo_v2_5    (English-only — multilingual_v2 was the
+#                              biggest contributor to language drift)
+#
+# similarity_boost stays at 0.80 to preserve Brian's identity across the
+# tighter stability envelope. See VOICE_AB_TEST.md for prior comparisons.
 _ELEVENLABS_DEFAULTS = {
-    "stability": 0.30,
+    "stability": 0.45,
     "similarity_boost": 0.80,
-    "style": 0.35,
+    "style": 0.15,
     "use_speaker_boost": True,
 }
+
+# English-only model — multilingual_v2 was implicated in the language-
+# switching bug. turbo_v2_5 is also faster + cheaper.
+_ELEVENLABS_MODEL_FALLBACK = "eleven_turbo_v2_5"
+_ELEVENLABS_LANGUAGE = "en"
 
 # --- Tech jargon pronunciation map -----------------------------------------
 # Most TTS engines (Brian included) get common acronyms wrong by default.
@@ -491,11 +502,27 @@ def _generate_elevenlabs(
     and on the final failed attempt."""
     import httpx
 
+    # Force the English-only model regardless of what config says — the
+    # language-switching bug only happens with multilingual_v2. If the user
+    # really wants multilingual, they can override _ELEVENLABS_MODEL_FALLBACK
+    # in code, but the config default isn't sufficient guarantee.
+    effective_model = model_id if "multilingual" not in model_id else _ELEVENLABS_MODEL_FALLBACK
+    if effective_model != model_id:
+        logger.warning(
+            "Overriding requested model %s -> %s to avoid language drift",
+            model_id, effective_model,
+        )
+
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
     body = {
         "text": text,
-        "model_id": model_id,
+        "model_id": effective_model,
         "voice_settings": _ELEVENLABS_DEFAULTS,
+        # Explicit language code stops the voice from "drifting" into Spanish
+        # / French / German mid-sentence — a known issue with English-leaning
+        # voices on multilingual models. Honored only by multilingual models;
+        # safe to pass on turbo_v2_5 (ignored).
+        "language_code": _ELEVENLABS_LANGUAGE,
     }
 
     attempt = 0
