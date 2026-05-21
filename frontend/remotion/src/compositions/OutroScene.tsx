@@ -37,10 +37,12 @@ export const OutroScene: React.FC<{
   const haloStart = Math.max(0, totalFrames - 60);
 
   const why = (whyItMatters || "").trim();
-  // First beat fades out as the takeaways come in.
+  // First beat fades in fast (matches the scene-frame crossfade) so a user
+  // clicking the Summary chapter dot lands on visible content rather than a
+  // dark grid. Then fades out as Beat 2 (takeaways) crossfades in.
   const whyOpacity = interpolate(
     frame,
-    [12, 30, beat1End - 12, beat1End],
+    [0, 9, beat1End - 12, beat1End],
     [0, 1, 1, 0],
     { extrapolateLeft: "clamp", extrapolateRight: "clamp" },
   );

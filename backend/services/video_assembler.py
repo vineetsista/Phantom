@@ -59,15 +59,21 @@ def compute_chapters(
     """
     chapters: list[dict[str, Any]] = []
     cursor = 0.0
-    for section in sections:
+    for i, section in enumerate(sections):
         sid = section.get("id", "section")
         audio = section.get("audio_duration_seconds") or section.get("duration_seconds") or 10
         scene_duration = float(audio) + buffer_s
+        # `cursor` is where this scene's <Sequence> begins (its `from`).
+        # The scene fades in over `transition_s` so its content isn't
+        # dominant until cursor + transition_s. Offset every non-zero
+        # chapter so clicking the dot lands on a fully-visible new scene,
+        # not on the previous scene's fade-out tail.
+        chapter_offset = 0.0 if i == 0 else transition_s
         chapters.append(
             {
                 "id": sid,
                 "title": _CHAPTER_TITLES.get(sid, sid.replace("_", " ").title()),
-                "start_seconds": round(cursor, 3),
+                "start_seconds": round(cursor + chapter_offset, 3),
             }
         )
         cursor += scene_duration - transition_s
