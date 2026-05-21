@@ -362,13 +362,17 @@ def _extract_modules(
     return modules
 
 
-EXCERPT_MAX_LINES = 28
-EXCERPT_MAX_BYTES = 4_000
+EXCERPT_MAX_LINES = 80
+EXCERPT_MAX_BYTES = 8_000
 
 
 def _read_code_excerpt(root: Path, top_files: list[dict]) -> dict[str, Any]:
-    """Read the first ~28 lines of the most prominent source file so the
-    CodeWalkthrough scene can render real code instead of a file list.
+    """Read up to ~80 lines of the most prominent source file. Eighty lines
+    is enough that the script generator has room to discuss real content
+    (the previous 28-line cap forced Claude to make up locations it
+    couldn't see). The renderer still only displays an 18-line focus
+    window — `focus_start_line`, set by the script generator, decides
+    where that window lands.
 
     Picks the largest source file that is plausibly hand-written (skips
     lockfiles, minified bundles, generated proto stubs)."""

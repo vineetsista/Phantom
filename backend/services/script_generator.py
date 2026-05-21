@@ -80,6 +80,20 @@ Three-item parallel lists ("X, Y, and Z") are an AI tell when stacked.
 Use two items, or four uneven ones, or restructure into separate
 sentences.
 
+NEVER REFERENCE SPECIFIC LINE NUMBERS. Do not say "line 48" or "on
+line 12" or any absolute line number. The displayed code is a window;
+the line numbers you see in the analysis input do not match what the
+viewer sees in the video. Reference function names, variable names,
+file paths, or structural concepts instead. "The fetchUrl helper
+handles the timeout dance" beats "Line 48 wraps fetch with timeouts" —
+the first is true regardless of where the code is rendered, the second
+is wrong about half the time.
+
+NEVER WRITE CODE SNIPPETS YOU DID NOT SEE IN THE INPUT. If a fact you
+want to mention isn't supported by something in `top_files` or
+`code_excerpt`, pick a different angle. Plausible-sounding code that
+doesn't appear verbatim in the input is forbidden output.
+
 EXAMPLE — BAD vs GOOD, SAME REPO (sindresorhus/is-online):
 
 BAD intro narration:
@@ -205,16 +219,23 @@ _TITLE_ADVERB = re.compile(
     r"\b(?:Reliably|Easily|Seamlessly|Effortlessly|Quickly|Simply|Beautifully|Powerfully)\b",
 )
 
+# Hard rejects — patterns that are flat-out wrong, not just stylistically
+# weak. The revision pass treats these as must-fix; if they survive 3 passes
+# we strip them by hand before shipping.
+_LINE_REFERENCE = re.compile(r"\bline\s+\d+\b", re.IGNORECASE)
+
 REQUIRED_SECTIONS = ("intro", "architecture", "code_walkthrough", "summary")
 
 
 def _slop_score(narration: str) -> list[str]:
     """Return the list of slop patterns that match the given narration. Empty
-    list means clean. Meta-tells are listed first so the revision prompt
-    knows which ones are the embarrassing ones."""
+    list means clean. Hard rejects (factually wrong, like line-number
+    references) come first, then meta-AI tells, then generic slop."""
     if not narration:
         return []
     hits: list[str] = []
+    if _LINE_REFERENCE.search(narration):
+        hits.append("HARD: \\bline \\d+\\b — line numbers are unreliable, reference functions instead")
     for pattern in _META_PATTERNS:
         if pattern.search(narration):
             hits.append(f"META: {pattern.pattern}")
@@ -222,6 +243,39 @@ def _slop_score(narration: str) -> list[str]:
         if pattern.search(narration):
             hits.append(pattern.pattern)
     return hits
+
+
+def _scrub_line_references(narration: str) -> str:
+    """Last-resort scrub if line refs survive 3 revision passes. Tries to
+    rewrite each match in a way that reads naturally rather than leaving
+    a syntactic hole.
+
+    Three patterns, ordered most-to-least specific:
+      "Line N does X" / "Line N is X"  →  "That helper does X"  (capitalised)
+      "on line N"                       →  ""  (drop the locative)
+      bare "line N"                     →  "that helper"
+    """
+    # Locative "on line N" / "at line N" → drop entirely
+    out = re.sub(
+        r"\b(?:on|at)\s+line\s+\d+\b",
+        "",
+        narration,
+        flags=re.IGNORECASE,
+    )
+
+    # Remaining "Line N" / "line N". A callback gives us the sentence-start
+    # context Python's re can't express in a variable-width lookbehind.
+    def _replace(match: re.Match[str]) -> str:
+        prev = out[: match.start()].rstrip()
+        sentence_start = not prev or prev[-1] in ".!?"
+        return "That helper" if sentence_start else "that helper"
+
+    out = re.sub(r"\bline\s+\d+\b", _replace, out, flags=re.IGNORECASE)
+
+    # Collapse the double spaces / orphan punctuation left behind.
+    out = re.sub(r"\s{2,}", " ", out)
+    out = re.sub(r"\s+([,.;])", r"\1", out)
+    return out.strip()
 
 
 def generate(analysis: AnalysisResult) -> dict[str, Any]:
@@ -293,6 +347,19 @@ def _generate_with_claude(analysis: AnalysisResult, api_key: str) -> dict[str, A
                 attempt, exc,
             )
             break
+
+    # Final post-revision sweep. Anything still containing a hard-reject
+    # pattern (line numbers Claude refused to give up) gets scrubbed by
+    # hand so we never ship a misleading "line 48" in the audio.
+    for section in parsed.get("sections", []):
+        narration = section.get("narration") or ""
+        if _LINE_REFERENCE.search(narration):
+            scrubbed = _scrub_line_references(narration)
+            logger.info(
+                "Hard-scrubbing line refs in section %s: %r -> %r",
+                section.get("id"), narration[:80], scrubbed[:80],
+            )
+            section["narration"] = scrubbed
 
     return _normalize(parsed, analysis)
 
@@ -450,6 +517,18 @@ def _normalize(script: dict[str, Any], analysis: AnalysisResult) -> dict[str, An
     if code is not None:
         excerpt = analysis.code_excerpt or {}
         code_text = excerpt.get("code", "")
+        # Defense in depth: log if Claude ever returned its own `code` value
+        # that doesn't match the analyzer's. The overwrite below makes this
+        # log-only — the rendered code is always the verbatim excerpt — but
+        # the log surface lets us spot prompt regressions.
+        claude_code = (code.get("visuals", {}) or {}).get("data", {}).get("code")
+        if claude_code and isinstance(claude_code, str) and claude_code.strip():
+            if claude_code.strip() not in code_text.replace("\r", ""):
+                logger.warning(
+                    "code_walkthrough: Claude returned non-verbatim code "
+                    "(len=%d). Overriding with analyzer excerpt (len=%d).",
+                    len(claude_code), len(code_text),
+                )
         code["visuals"] = {
             "type": "code_highlight",
             "data": {
