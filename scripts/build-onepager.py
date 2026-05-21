@@ -216,7 +216,7 @@ def build(path: Path) -> None:
 
     c.showPage()
     c.save()
-    print(f"✓ Wrote {path.relative_to(ROOT)}")
+    print(f"Wrote {path.relative_to(ROOT)}")
 
 
 if __name__ == "__main__":
