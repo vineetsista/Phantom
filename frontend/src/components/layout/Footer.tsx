@@ -5,7 +5,13 @@ import { usePathname } from "next/navigation";
 
 import { Logo } from "@/components/shared/Logo";
 
-const columns = [
+type FooterLink = {
+  href?: string;
+  label: string;
+  external?: boolean;
+};
+
+const columns: { title: string; links: FooterLink[] }[] = [
   {
     title: "Product",
     links: [
@@ -18,17 +24,25 @@ const columns = [
   {
     title: "Resources",
     links: [
-      { href: "/docs", label: "Docs" },
-      { href: "/changelog", label: "Changelog" },
-      { href: "/examples", label: "Examples" },
-      { href: "https://github.com/", label: "GitHub" },
+      {
+        href: "https://github.com/vsista/phantom",
+        label: "GitHub",
+        external: true,
+      },
+      { label: "Docs · coming soon" },
+      { label: "Changelog · coming soon" },
+      { label: "Examples · coming soon" },
     ],
   },
   {
     title: "Company",
     links: [
       { href: "/about", label: "About" },
-      { href: "https://twitter.com/usephantom", label: "Twitter" },
+      {
+        href: "https://twitter.com/usephantom",
+        label: "Twitter",
+        external: true,
+      },
       { href: "mailto:hello@phantom.video", label: "Contact" },
       { href: "/privacy", label: "Privacy" },
     ],
@@ -58,12 +72,18 @@ export function Footer() {
               <ul className="space-y-4">
                 {column.links.map((link) => (
                   <li key={link.label}>
-                    <Link
-                      href={link.href}
-                      className="text-sm text-bone transition-colors duration-300 ease-luxe hover:text-electric"
-                    >
-                      {link.label}
-                    </Link>
+                    {link.href ? (
+                      <Link
+                        href={link.href}
+                        target={link.external ? "_blank" : undefined}
+                        rel={link.external ? "noreferrer" : undefined}
+                        className="text-sm text-bone transition-colors duration-300 ease-luxe hover:text-electric"
+                      >
+                        {link.label}
+                      </Link>
+                    ) : (
+                      <span className="text-sm text-mist">{link.label}</span>
+                    )}
                   </li>
                 ))}
               </ul>
