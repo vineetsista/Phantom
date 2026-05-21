@@ -182,12 +182,15 @@ def generate_video(self, job_id: str, repo_url: str, options: dict[str, Any]) ->
             job_id, script, audio_files, diagram_path
         )
 
-        # Stage 6 — finalize
+        # Stage 6 — finalize. The assembler mutated `script` in place to
+        # add the canonical chapters list — re-persist script_data so the
+        # frontend sees chapters alongside the completed video URL.
         _update(
             job_id,
             status=VideoStatus.complete,
             progress=100,
             details={"stage": "Complete"},
+            script_data=script,
             video_url=f"/media/videos/{Path(output['video_path']).name}",
             thumbnail_url=f"/media/thumbnails/{Path(output['thumbnail_path']).name}",
             duration_seconds=output["duration_seconds"],
