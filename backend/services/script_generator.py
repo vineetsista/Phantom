@@ -256,35 +256,106 @@ def _revise_with_claude(
 
 
 def _normalize(script: dict[str, Any], analysis: AnalysisResult) -> dict[str, Any]:
-    """Make sure required keys exist with sane defaults and the section list
-    covers the scenes we know how to render."""
-    sections = script.get("sections") or []
-    seen = {s.get("id") for s in sections}
+    """Reshape Claude's output into the strict schema the renderer requires.
+
+    Critical invariants (each backed by a real failure we hit in production):
+      - Each REQUIRED_SECTIONS id appears at most once. Claude has been seen
+        emitting two `architecture` sections in the same script.
+      - Sections render in canonical order: intro → architecture →
+        code_walkthrough → summary. Claude's order is otherwise wherever it
+        feels like.
+      - Architecture's `visuals.data.modules` comes from the analyzer, not
+        from Claude. Claude has been seen producing `{nodes, edges}` which
+        the ArchitectureScene component does not read, leaving the scene
+        empty below its header.
+      - Code walkthrough's `visuals.data.code` comes from the analyzer for
+        the same reason — we don't trust the model to hand-write source.
+      - If a scene has no real data to render (e.g. architecture with zero
+        modules for a single-file library), the scene is dropped from the
+        timeline entirely. An empty header is worse than no scene.
+    """
+    raw_sections = script.get("sections") or []
+
+    # 1. Dedupe by id (keep first occurrence). Sections with missing ids are
+    # discarded — every renderable scene must declare its kind.
+    deduped: dict[str, dict[str, Any]] = {}
+    for section in raw_sections:
+        sid = section.get("id")
+        if not sid or sid in deduped:
+            continue
+        deduped[sid] = section
+
+    # 2. Make sure every required scene has a section, even if Claude omitted
+    # one. The defaults are deliberately spare — Claude's revision pass and
+    # _normalize's data injection below are what make them watchable.
     for required in REQUIRED_SECTIONS:
-        if required not in seen:
-            sections.append(_default_section(required, analysis))
+        if required not in deduped:
+            deduped[required] = _default_section(required, analysis)
 
-    # Always inject the analyzer's real code excerpt into code_walkthrough —
-    # Claude isn't trusted to hand-write source code, so we override with the
-    # excerpt actually read off disk.
-    excerpt = analysis.code_excerpt or {}
-    if excerpt.get("code"):
-        for section in sections:
-            if section.get("id") == "code_walkthrough":
-                data = (section.setdefault("visuals", {}).setdefault("data", {}))
-                if not data.get("code"):
-                    data["code"] = excerpt.get("code", "")
-                    data["path"] = excerpt.get("path", "")
-                    data["language"] = excerpt.get("language", "")
-                    data.setdefault(
-                        "highlight_lines",
-                        _heuristic_highlight_lines(excerpt.get("code", "")),
-                    )
-                if not data.get("files"):
-                    data["files"] = analysis.top_files[:3]
-                break
+    # 3. Force the architecture and code_walkthrough scenes to use the
+    # analyzer's real data. Narration is kept (Claude is allowed to talk
+    # about whatever it likes); only the visual data is overwritten.
+    arch = deduped.get("architecture")
+    if arch is not None:
+        # Strip CI / editor / dependency directories. They show up as modules
+        # because they're top-level dirs but they aren't the codebase. A repo
+        # whose only "module" is `.github` is a repo with no architecture
+        # diagram to show.
+        non_code = {
+            ".github", ".husky", ".vscode", ".idea", ".devcontainer",
+            ".circleci", ".gitlab", "node_modules", "vendor", "dist",
+            "build", "target", "out", "coverage", ".next", ".turbo",
+            "venv", ".venv", "__pycache__",
+        }
+        modules = [
+            m for m in (analysis.modules or [])
+            if m.get("name", "").lower() not in non_code
+        ]
+        arch["visuals"] = {
+            "type": "architecture_diagram",
+            "data": {
+                "modules": modules[:8],
+                "hint": analysis.architecture_hint,
+            },
+        }
 
-    script["sections"] = sections
+    code = deduped.get("code_walkthrough")
+    if code is not None:
+        excerpt = analysis.code_excerpt or {}
+        code_text = excerpt.get("code", "")
+        code["visuals"] = {
+            "type": "code_highlight",
+            "data": {
+                "code": code_text,
+                "path": excerpt.get("path", ""),
+                "language": excerpt.get("language", ""),
+                "highlight_lines": _heuristic_highlight_lines(code_text),
+                "files": analysis.top_files[:3],
+            },
+        }
+
+    # 4. Drop scenes that have nothing to render. A single-file library has
+    # no meaningful architecture diagram; one module rendered alone looks
+    # broken. Require at least two real modules before showing the scene.
+    if arch is not None and len(arch["visuals"]["data"]["modules"]) < 2:
+        logger.info(
+            "Dropping architecture scene — only %d real modules after filtering",
+            len(arch["visuals"]["data"]["modules"]),
+        )
+        del deduped["architecture"]
+    if code is not None and not code["visuals"]["data"]["code"]:
+        logger.info("Dropping code_walkthrough scene — analyzer found no excerpt")
+        del deduped["code_walkthrough"]
+
+    # 5. Re-order into canonical sequence. Non-required scenes (rare) are
+    # appended after the required ones in Claude's original order.
+    ordered: list[dict[str, Any]] = []
+    for required in REQUIRED_SECTIONS:
+        if required in deduped:
+            ordered.append(deduped.pop(required))
+    ordered.extend(deduped.values())
+
+    script["sections"] = ordered
     script.setdefault("title", _default_title(analysis))
     script.setdefault("hook", _default_hook(analysis))
     script.setdefault(
@@ -292,7 +363,7 @@ def _normalize(script: dict[str, Any], analysis: AnalysisResult) -> dict[str, An
         _default_takeaways(analysis),
     )
     script["total_duration_seconds"] = sum(
-        int(s.get("duration_seconds") or 10) for s in sections
+        int(s.get("duration_seconds") or 10) for s in ordered
     )
     return script
 
