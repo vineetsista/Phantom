@@ -33,6 +33,9 @@ export interface CompositionProps {
   script: VideoScript;
   audio: AudioSegment[];
   diagramSvgPath: string;
+  /** Optional background music track. Path is passed to `staticFile()`,
+   * so it must be relative to the configured public/ folder. */
+  musicSrc?: string | null;
 }
 
 export const FPS = 30;

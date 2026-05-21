@@ -7,6 +7,7 @@ import {
   staticFile,
 } from "remotion";
 
+import { MusicBed } from "./components/MusicBed";
 import { ArchitectureScene } from "./compositions/ArchitectureScene";
 import { CodeWalkthroughScene } from "./compositions/CodeWalkthroughScene";
 import { IntroScene } from "./compositions/IntroScene";
@@ -33,11 +34,16 @@ function renderScene(section: ScriptSection, takeaways: string[]) {
   }
 }
 
-export const PhantomVideo: React.FC<CompositionProps> = ({ script, audio }) => {
+export const PhantomVideo: React.FC<CompositionProps> = ({
+  script,
+  audio,
+  musicSrc,
+}) => {
   const audioBySection = new Map(audio.map((a) => [a.section_id, a]));
 
   return (
     <AbsoluteFill style={{ background: COLORS.bg }}>
+      {musicSrc && <MusicBed src={musicSrc} />}
       <Series>
         {script.sections.map((section) => {
           const audioTrack = audioBySection.get(section.id);

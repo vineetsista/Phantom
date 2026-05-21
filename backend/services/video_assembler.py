@@ -23,6 +23,19 @@ from config import get_settings
 logger = logging.getLogger(__name__)
 
 
+MUSIC_REL_PATH = "music/ambient.mp3"
+
+
+def _detect_music_src(remotion_project_dir: str) -> str | None:
+    """If the brand ambient bed exists under the shared frontend public/ folder
+    (one level up from the Remotion package), pass its relative path to the
+    composition so MusicBed can render it. Falls back to no music if absent."""
+    public_dir = Path(remotion_project_dir).parent / "public"
+    if (public_dir / MUSIC_REL_PATH).is_file():
+        return MUSIC_REL_PATH
+    return None
+
+
 def assemble(
     job_id: str,
     script: dict[str, Any],
@@ -39,6 +52,8 @@ def assemble(
     video_path = output_dir / f"{job_id}.mp4"
     thumbnail_path = thumb_dir / f"{job_id}.png"
 
+    music_src = _detect_music_src(settings.remotion_project_dir)
+
     props_path = Path(settings.temp_dir) / job_id / "composition-props.json"
     props_path.parent.mkdir(parents=True, exist_ok=True)
     props_path.write_text(
@@ -47,6 +62,7 @@ def assemble(
                 "script": script,
                 "audio": audio_files,
                 "diagramSvgPath": str(diagram_svg_path),
+                "musicSrc": music_src,
             },
             indent=2,
         ),
