@@ -48,8 +48,14 @@ def _update(
 def generate_video(self, job_id: str, repo_url: str, options: dict[str, Any]) -> dict[str, Any]:
     """End-to-end pipeline: analyze → script → diagram → voice → assemble."""
     settings = get_settings()
-    voice_provider = options.get("voice") or settings.default_voice
+    # `options.voice` may be None (API didn't force a provider). Let the
+    # voice_generator resolve from DEFAULT_VOICE then auto-detect.
+    requested_voice = options.get("voice")
     quality = options.get("quality") or settings.default_quality
+    logger.info(
+        "generate_video start job=%s repo=%s voice_request=%s quality=%s",
+        job_id, repo_url, requested_voice, quality,
+    )
 
     try:
         # Stage 1 — clone & analyze
@@ -110,14 +116,27 @@ def generate_video(self, job_id: str, repo_url: str, options: dict[str, Any]) ->
         diagram_generator.generate(analysis, diagram_path)
 
         # Stage 4 — voiceover
+        resolved_voice, voice_reason = voice_generator.resolve_provider(requested_voice)
         _update(
             job_id,
             status=VideoStatus.voiceover,
             progress=70,
-            details={"stage": "Generating voiceover"},
-            voice_provider=voice_provider,
+            details={
+                "stage": "Generating voiceover",
+                "voice_provider": resolved_voice,
+                "voice_reason": voice_reason,
+            },
+            voice_provider=resolved_voice,
         )
-        audio_files = voice_generator.generate(script, job_id, provider=voice_provider)
+        logger.info(
+            "job=%s voice provider resolved: %s (%s)",
+            job_id, resolved_voice, voice_reason,
+        )
+        audio_files = voice_generator.generate(script, job_id, provider=resolved_voice)
+        logger.info(
+            "job=%s voiceover produced %d segments",
+            job_id, len(audio_files),
+        )
 
         # Stage 5 — assemble
         _update(

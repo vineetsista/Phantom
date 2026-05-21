@@ -1,3 +1,5 @@
+from typing import Literal, Optional
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -10,8 +12,10 @@ router = APIRouter(prefix="/api/v1", tags=["generate"])
 
 
 class GenerateOptions(BaseModel):
-    voice: str = Field(default="openai", pattern=r"^(openai|elevenlabs)$")
-    quality: str = Field(default="720p", pattern=r"^(720p|1080p)$")
+    # None means "let the worker decide" — falls through to DEFAULT_VOICE env
+    # var, then to auto-detect based on which API keys are configured.
+    voice: Optional[Literal["openai", "elevenlabs"]] = None
+    quality: Literal["720p", "1080p"] = "720p"
 
 
 class GenerateRequest(BaseModel):
@@ -38,7 +42,9 @@ def create_generation(body: GenerateRequest, db: Session = Depends(get_db)) -> G
         status=VideoStatus.queued,
         progress=0,
         status_details={"stage": "Queued"},
-        voice_provider=body.options.voice,
+        # voice_provider is left blank here; the worker fills it in with the
+        # actually-resolved provider once it's selected.
+        voice_provider=body.options.voice or "",
         video_quality=body.options.quality,
     )
     db.add(video)
