@@ -1,8 +1,31 @@
 export interface ScriptModule {
-  name: string;
-  role: string;
+  /** Legacy shape — flat top-level directory module. */
+  name?: string;
+  role?: string;
   description?: string;
   file_count?: number;
+  /** New shape — emitted by script_generator for the progressive-reveal
+   * architecture scene. `id` is a short slug used as the from/to of
+   * connections. `label` is what renders on the module box. `file_path`
+   * renders in mono font below the label. */
+  id?: string;
+  label?: string;
+  file_path?: string;
+  /** Time in seconds (relative to the architecture section's audio) at
+   * which the narrator first mentions this module. Drives the
+   * progressive-reveal animation. */
+  narration_start_seconds?: number;
+}
+
+export interface ScriptConnection {
+  from: string;
+  to: string;
+  narration_start_seconds?: number;
+}
+
+export interface ScriptDataFlow {
+  path: string[];
+  narration_seconds?: number;
 }
 
 export interface ScriptSection {

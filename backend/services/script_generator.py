@@ -118,6 +118,94 @@ Why it's good: opens with a specific technical claim, names the author,
 quotes a number from the code, has a stance ("bets on the network"),
 ends with momentum.
 
+ARCHITECTURE SECTION — TREAT IT AS A WHITEBOARD WALKTHROUGH:
+
+The architecture scene constructs a diagram in real time as you speak.
+Don't list modules — narrate a path through the system, starting at
+the entry point and following dependencies outward. As you mention a
+module, it appears on screen. As you describe a relationship, an arrow
+draws.
+
+For the architecture section, the JSON `visuals.data` must look like:
+
+  {
+    "modules": [
+      { "id": "entry", "label": "index.js", "file_path": "index.js",
+        "narration_start_seconds": 0.0 },
+      { "id": "p-any", "label": "p-any", "file_path": "node_modules/p-any",
+        "narration_start_seconds": 6.2 },
+      ...
+    ],
+    "connections": [
+      { "from": "entry", "to": "p-any", "narration_start_seconds": 6.2 },
+      ...
+    ],
+    "data_flows": [
+      { "path": ["entry", "router", "handler"], "narration_seconds": 14.0 }
+    ]
+  }
+
+Rules for this data:
+- `narration_start_seconds` is the time, in seconds from the start of
+  the architecture section's narration, when the module/connection
+  first comes up. Be deliberate — the diagram constructs itself as you
+  speak. Two-second resolution is fine.
+- `id` must be unique within the section. Use short kebab-case slugs.
+- `connections` from one module to another should match a moment in
+  the narration where you describe that relationship.
+- `data_flows` are optional — only include if the narration genuinely
+  walks a path through the system ("request hits the router, then the
+  middleware, then the handler"). The `path` is a list of module ids.
+
+The narration for the architecture section MUST follow an arc: start
+at the entry point, follow the data flow outward, end at the leaf
+dependencies or the user-visible boundary. Not a flat list of modules.
+
+CODE WALKTHROUGH SECTION — TEACH LIKE A HUMAN AT A WHITEBOARD:
+
+The code panel auto-scrolls as you point at lines. You give one line
+the punchline treatment — exactly ONE per scene — by marking it
+`punchline: true`; that line types itself in character-by-character
+as you speak the sentence about it. A few other lines can be marked
+`emphasis: true` to trigger a zoom-in.
+
+For the code_walkthrough section, the JSON `visuals.data` must look
+like:
+
+  {
+    "code": "<the source code, verbatim from the input>",
+    "path": "index.js",
+    "language": "JavaScript",
+    "highlights": [
+      { "line_number": 8, "code": "<the exact line text>",
+        "narration_start_seconds": 0.0,
+        "emphasis": false, "punchline": false,
+        "annotation": "diagnostics channel" },
+      { "line_number": 23, "code": "<the exact line text>",
+        "narration_start_seconds": 14.5,
+        "emphasis": true, "punchline": false,
+        "annotation": "wraps fetch with timeouts" },
+      { "line_number": 48, "code": "<the exact line text>",
+        "narration_start_seconds": 32.0,
+        "emphasis": true, "punchline": true,
+        "annotation": "this is the actual race",
+        "cross_reference": { "to_file": "browser.js", "to_definition": "checkUrls", "to_line": 12 } }
+    ]
+  }
+
+Rules:
+- EXACTLY ONE highlight per scene has `punchline: true`. Pick the most
+  important line — the one that, if a viewer remembered just one
+  thing, would be enough.
+- Multiple highlights can have `emphasis: true` (gets a zoom-in).
+- `annotation` is 6-10 words pulled from your narration at that
+  moment. Optional but encouraged.
+- `cross_reference` is optional — include only when the narration
+  says "this calls into X" or "defined in Y" and you have evidence
+  for the target line in the input.
+- `code` for each highlight must be the exact source line that
+  appears in the input at that line number. No paraphrasing.
+
 Return ONLY valid JSON (no prose, no code fences) with this exact structure:
 
 {
@@ -618,27 +706,77 @@ def _normalize(script: dict[str, Any], analysis: AnalysisResult) -> dict[str, An
 
     arch = deduped.get("architecture")
     if arch is not None:
-        # Strip CI / editor / dependency directories. They show up as modules
-        # because they're top-level dirs but they aren't the codebase. A repo
-        # whose only "module" is `.github` is a repo with no architecture
-        # diagram to show.
-        non_code = {
-            ".github", ".husky", ".vscode", ".idea", ".devcontainer",
-            ".circleci", ".gitlab", "node_modules", "vendor", "dist",
-            "build", "target", "out", "coverage", ".next", ".turbo",
-            "venv", ".venv", "__pycache__",
-        }
-        modules = [
-            m for m in (analysis.modules or [])
-            if m.get("name", "").lower() not in non_code
-        ]
-        arch["visuals"] = {
-            "type": "architecture_diagram",
-            "data": {
-                "modules": modules[:8],
-                "hint": analysis.architecture_hint,
-            },
-        }
+        # Accept Claude's progressive-reveal architecture schema when it's
+        # well-formed (modules with id+label, connections referencing valid
+        # ids). Otherwise fall back to the analyzer's flat module list so
+        # the scene still has something to show.
+        claude_data = (arch.get("visuals", {}) or {}).get("data", {}) or {}
+        claude_modules = claude_data.get("modules")
+        if (
+            isinstance(claude_modules, list)
+            and claude_modules
+            and all(
+                isinstance(m, dict) and m.get("id") and m.get("label")
+                for m in claude_modules
+            )
+        ):
+            # Sanitise: only keep connections whose endpoints are real ids.
+            valid_ids = {m["id"] for m in claude_modules}
+            claude_connections = [
+                c for c in (claude_data.get("connections") or [])
+                if isinstance(c, dict)
+                and c.get("from") in valid_ids
+                and c.get("to") in valid_ids
+            ]
+            claude_data_flows = [
+                f for f in (claude_data.get("data_flows") or [])
+                if isinstance(f, dict)
+                and isinstance(f.get("path"), list)
+                and all(p in valid_ids for p in f["path"])
+            ]
+            arch["visuals"] = {
+                "type": "architecture_diagram",
+                "data": {
+                    "modules": claude_modules[:10],
+                    "connections": claude_connections,
+                    "data_flows": claude_data_flows,
+                    "hint": analysis.architecture_hint,
+                },
+            }
+        else:
+            # Strip CI / editor / dependency directories. They show up as
+            # modules because they're top-level dirs but they aren't the
+            # codebase. Build a synthetic "entry -> dep" graph for repos
+            # without enough top-level structure.
+            non_code = {
+                ".github", ".husky", ".vscode", ".idea", ".devcontainer",
+                ".circleci", ".gitlab", "node_modules", "vendor", "dist",
+                "build", "target", "out", "coverage", ".next", ".turbo",
+                "venv", ".venv", "__pycache__",
+            }
+            raw_modules = [
+                m for m in (analysis.modules or [])
+                if m.get("name", "").lower() not in non_code
+            ]
+            modules = [
+                {
+                    "id": m["name"].lower().replace("/", "-"),
+                    "label": m["name"],
+                    "file_path": m.get("path") or m["name"],
+                    "narration_start_seconds": i * 2.0,
+                }
+                for i, m in enumerate(raw_modules[:8])
+            ]
+            connections = []
+            arch["visuals"] = {
+                "type": "architecture_diagram",
+                "data": {
+                    "modules": modules,
+                    "connections": connections,
+                    "data_flows": [],
+                    "hint": analysis.architecture_hint,
+                },
+            }
 
     code = deduped.get("code_walkthrough")
     if code is not None:
