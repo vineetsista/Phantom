@@ -32,14 +32,16 @@ from config import get_settings
 logger = logging.getLogger(__name__)
 
 # --- Voice tuning ----------------------------------------------------------
-# Settings tuned for tech narration with Brian. Lower stability gives more
-# emotional variation (the voice "leans in" on emphasis); style at 0.20 adds
-# personality without going theatrical; speaker_boost cleans up sibilance at
-# the higher gain that headphone listeners use.
+# Settings tuned for tech narration. Stability 0.30 (down from 0.40) lets the
+# voice "lean in" more on emphasis — flat sentences felt flat at 0.40. Style
+# 0.35 (up from 0.20) brings noticeable personality without going theatrical.
+# Similarity_boost 0.80 (up from 0.75) keeps the speaker identity tight across
+# long-form narration where lower stability would otherwise drift.
+# See VOICE_AB_TEST.md for the three-combo comparison and reasoning.
 _ELEVENLABS_DEFAULTS = {
-    "stability": 0.40,
-    "similarity_boost": 0.75,
-    "style": 0.20,
+    "stability": 0.30,
+    "similarity_boost": 0.80,
+    "style": 0.35,
     "use_speaker_boost": True,
 }
 
@@ -97,12 +99,48 @@ def _preprocess_narration(text: str) -> str:
     if not text:
         return text
 
-    # Sentence-level breaks: ". " → ". <break time=\"250ms\"/> "
-    # The trailing space is preserved so the resulting text still parses
-    # as natural prose for engines that ignore the tag.
+    # Punctuation-aware breaks. ElevenLabs respects the `<break>` tag and
+    # treats it as a pause of the requested length. The prior version
+    # inserted a single 250ms break only between sentences — too uniform,
+    # and the result still read flat. Vary by punctuation context:
+    #
+    #   end of paragraph (.!? followed by \n\n or end-of-text)  → 500ms
+    #   sentence ending mid-paragraph (.!? + space + capital)   → 350ms
+    #   colon before an explanation                              → 250ms
+    #   em-dash                                                  → 200ms
+    #   semicolon                                                → 200ms
+    #   comma                                                    → 150ms
+    #
+    # Order matters: paragraph-end first (more specific) before mid-sentence
+    # period.
+    text = re.sub(
+        r"([.!?])(\n{2,}|\s*$)",
+        r'\1 <break time="500ms"/>\2',
+        text,
+    )
     text = re.sub(
         r"(?<=[.!?])\s+(?=[A-Z\"'])",
+        ' <break time="350ms"/> ',
+        text,
+    )
+    text = re.sub(
+        r"(?<=:)\s+(?=[A-Za-z\"'])",
         ' <break time="250ms"/> ',
+        text,
+    )
+    text = re.sub(
+        r"\s*—\s*",
+        r' <break time="200ms"/> ',
+        text,
+    )
+    text = re.sub(
+        r"(?<=;)\s+",
+        ' <break time="200ms"/> ',
+        text,
+    )
+    text = re.sub(
+        r"(?<=,)\s+(?=[A-Za-z\"'])",
+        ' <break time="150ms"/> ',
         text,
     )
 
