@@ -9,8 +9,11 @@ import {
 
 import { AnimatedCounter } from "../components/AnimatedCounter";
 import { BackgroundGrid } from "../components/BackgroundGrid";
+import { CameraMove } from "../components/CameraMove";
 import { CodeRain } from "../components/CodeRain";
 import { LogoMark } from "../components/LogoMark";
+import { Particles } from "../components/Particles";
+import { TypewriterText } from "../components/TypewriterText";
 import { Watermark } from "../components/Watermark";
 import { FONT_BODY, FONT_DISPLAY, FONT_MONO } from "../loadFonts";
 import { COLORS, type ScriptSection } from "../types";
@@ -50,43 +53,56 @@ export const IntroScene: React.FC<{ section: ScriptSection }> = ({ section }) =>
 
   return (
     <AbsoluteFill>
+      {/* Far layer: grid + radial glow (already inside BackgroundGrid). */}
       <BackgroundGrid />
+      {/* Mid layer: drifting particles. Atmosphere, not content. */}
+      <Particles count={28} seed={Math.floor((data?.title ?? "x").length * 17)} />
+      {/* Near layer: blurred code rain, slowest visual element. */}
       <CodeRain />
 
-      <AbsoluteFill style={center}>
-        <LogoMark size={120} startFrame={logoStart} />
+      <CameraMove pan="right" intensity={0.85}>
+        <AbsoluteFill style={center}>
+          <LogoMark size={120} startFrame={logoStart} />
 
-        <div
-          style={{
-            opacity: kickerOpacity,
-            marginTop: 36,
-            fontFamily: FONT_MONO,
-            fontSize: 18,
-            letterSpacing: 6,
-            textTransform: "uppercase",
-            color: COLORS.cyan,
-          }}
-        >
-          PHANTOM · REPOX
-        </div>
+          <div
+            style={{
+              opacity: kickerOpacity,
+              marginTop: 36,
+              fontFamily: FONT_MONO,
+              fontSize: 18,
+              letterSpacing: 6,
+              textTransform: "uppercase",
+              color: COLORS.cyan,
+            }}
+          >
+            PHANTOM · REPOX
+          </div>
 
-        <div
-          style={{
-            opacity: titleSpring,
-            transform: `translateY(${titleY}px)`,
-            marginTop: 32,
-            fontFamily: FONT_DISPLAY,
-            fontSize: 128,
-            fontWeight: 800,
-            letterSpacing: -2,
-            color: COLORS.text,
-            textAlign: "center",
-            maxWidth: 1500,
-            lineHeight: 1.05,
-          }}
-        >
-          {data?.title ?? "Repository"}
-        </div>
+          <div
+            style={{
+              opacity: titleSpring,
+              transform: `translateY(${titleY}px)`,
+              marginTop: 32,
+              fontFamily: FONT_DISPLAY,
+              fontSize: 128,
+              fontWeight: 800,
+              letterSpacing: -2,
+              color: COLORS.text,
+              textAlign: "center",
+              maxWidth: 1500,
+              lineHeight: 1.05,
+            }}
+          >
+            {/* Typewriter reveal — characters appear at ~32ms/char. The repo
+                name is the headline, so this carries the weight of the opening
+                moment. */}
+            <TypewriterText
+              text={data?.title ?? "Repository"}
+              startFrame={titleStart}
+              msPerChar={28}
+              cursorColor={COLORS.cyan}
+            />
+          </div>
 
         <div
           style={{
@@ -114,25 +130,26 @@ export const IntroScene: React.FC<{ section: ScriptSection }> = ({ section }) =>
             color: COLORS.text,
           }}
         >
-          {data?.language && <Pill label={data.language} accent={COLORS.cyan} />}
-          {typeof data?.stars === "number" && data.stars > 0 && (
-            <Pill
-              accent={COLORS.violet}
-              custom={
-                <span style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
-                  <span>★</span>
-                  <AnimatedCounter
-                    value={data.stars}
-                    startFrame={metaStart}
-                    durationFrames={36}
-                    fontSize={22}
-                  />
-                </span>
-              }
-            />
-          )}
-        </div>
-      </AbsoluteFill>
+            {data?.language && <Pill label={data.language} accent={COLORS.cyan} />}
+            {typeof data?.stars === "number" && data.stars > 0 && (
+              <Pill
+                accent={COLORS.violet}
+                custom={
+                  <span style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
+                    <span>★</span>
+                    <AnimatedCounter
+                      value={data.stars}
+                      startFrame={metaStart}
+                      durationFrames={36}
+                      fontSize={22}
+                    />
+                  </span>
+                }
+              />
+            )}
+          </div>
+        </AbsoluteFill>
+      </CameraMove>
       <Watermark />
     </AbsoluteFill>
   );

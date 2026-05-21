@@ -8,6 +8,8 @@ import {
 } from "remotion";
 
 import { BackgroundGrid } from "../components/BackgroundGrid";
+import { CameraMove } from "../components/CameraMove";
+import { Particles } from "../components/Particles";
 import { Watermark } from "../components/Watermark";
 import { FONT_BODY, FONT_DISPLAY } from "../loadFonts";
 import { COLORS, type ScriptModule, type ScriptSection } from "../types";
@@ -58,7 +60,9 @@ export const ArchitectureScene: React.FC<{ section: ScriptSection }> = ({ sectio
   return (
     <AbsoluteFill>
       <BackgroundGrid />
+      <Particles count={20} seed={modules.length * 41 + 1} speed={0.8} />
 
+      <CameraMove pan="left" intensity={0.7}>
       <div
         style={{
           position: "absolute",
@@ -174,6 +178,7 @@ export const ArchitectureScene: React.FC<{ section: ScriptSection }> = ({ sectio
         );
       })}
 
+      </CameraMove>
       <Watermark />
     </AbsoluteFill>
   );

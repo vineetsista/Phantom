@@ -8,6 +8,8 @@ import {
 } from "remotion";
 
 import { BackgroundGrid } from "../components/BackgroundGrid";
+import { CameraMove } from "../components/CameraMove";
+import { Particles } from "../components/Particles";
 import { FONT_BODY, FONT_DISPLAY, FONT_MONO } from "../loadFonts";
 import { COLORS, type ScriptSection } from "../types";
 
@@ -24,6 +26,8 @@ export const OutroScene: React.FC<{
   return (
     <AbsoluteFill>
       <BackgroundGrid />
+      <Particles count={22} seed={items.length * 23 + 7} speed={0.6} />
+      <CameraMove pan="right" intensity={1}>
       <AbsoluteFill
         style={{
           display: "flex",
@@ -116,6 +120,7 @@ export const OutroScene: React.FC<{
           phantom.video · repox
         </div>
       </AbsoluteFill>
+      </CameraMove>
     </AbsoluteFill>
   );
 };

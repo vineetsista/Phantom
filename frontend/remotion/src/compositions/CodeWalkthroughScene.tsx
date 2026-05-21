@@ -8,9 +8,11 @@ import {
 } from "remotion";
 
 import { BackgroundGrid } from "../components/BackgroundGrid";
+import { CameraMove } from "../components/CameraMove";
+import { Particles } from "../components/Particles";
 import { Watermark } from "../components/Watermark";
 import { FONT_BODY, FONT_DISPLAY, FONT_MONO } from "../loadFonts";
-import { COLORS, type ScriptSection } from "../types";
+import { COLORS, FPS, type ScriptSection } from "../types";
 
 interface FileSummary {
   path: string;
@@ -88,7 +90,7 @@ function tokenizeLine(line: string): Tok[] {
 
 export const CodeWalkthroughScene: React.FC<{ section: ScriptSection }> = ({ section }) => {
   const frame = useCurrentFrame();
-  const { fps, durationInFrames } = useVideoConfig();
+  const { fps } = useVideoConfig();
 
   const data = (section.visuals?.data as CodeData) ?? {};
   const lines = useMemo(() => (data.code ?? "").split("\n").slice(0, MAX_VISIBLE_LINES), [data.code]);
@@ -96,6 +98,13 @@ export const CodeWalkthroughScene: React.FC<{ section: ScriptSection }> = ({ sec
   const highlights = (data.highlight_lines ?? []).filter(
     (n) => n >= 1 && n <= lines.length,
   );
+
+  // The SCENE's frame budget = real audio length (set in Problem 1 by the
+  // worker's ffprobe pass) + 0.6s trailing buffer, rendered at FPS. Falling
+  // back to duration_seconds keeps preview renders sensible.
+  const sceneSeconds =
+    (section.audio_duration_seconds ?? section.duration_seconds ?? 12) + 0.6;
+  const sceneFrames = Math.round(sceneSeconds * fps);
 
   // Header springs in first
   const headerSpring = spring({ frame, fps, config: { damping: 20, stiffness: 130 } });
@@ -106,13 +115,18 @@ export const CodeWalkthroughScene: React.FC<{ section: ScriptSection }> = ({ sec
   // Per-line type-on reveal
   const linesRevealedAt = (index: number) => 18 + index * 3;
 
-  // Highlight box position — picks the next highlight line based on frame
+  // Highlight box position — picks the next highlight line based on frame.
+  // Timing is now derived from THIS SCENE's frame budget, not the whole
+  // composition (the previous version pulled durationInFrames from
+  // useVideoConfig which returns the entire video's duration — that made
+  // early scenes hold each highlight for far too long).
   const activeHighlight = useMemo(() => {
     if (highlights.length === 0) return null;
     const startFrame = 60;
+    const tail = Math.round(0.6 * FPS); // leave the buffer empty
     const perHighlight = Math.max(
       30,
-      Math.floor((durationInFrames - startFrame - 30) / highlights.length),
+      Math.floor((sceneFrames - startFrame - tail) / highlights.length),
     );
     if (frame < startFrame) return null;
     const slot = Math.min(
@@ -125,12 +139,14 @@ export const CodeWalkthroughScene: React.FC<{ section: ScriptSection }> = ({ sec
       extrapolateRight: "clamp",
     });
     return { lineNumber: highlights[slot], appear: eased };
-  }, [highlights, frame, durationInFrames]);
+  }, [highlights, frame, sceneFrames]);
 
   return (
     <AbsoluteFill>
       <BackgroundGrid />
+      <Particles count={18} seed={(data.path ?? "x").length * 13 + 11} speed={0.5} />
 
+      <CameraMove pan="right" intensity={0.5}>
       <div
         style={{
           position: "absolute",
@@ -216,7 +232,7 @@ export const CodeWalkthroughScene: React.FC<{ section: ScriptSection }> = ({ sec
 
         {tokens.map((lineTokens, index) => {
           const start = linesRevealedAt(index);
-          const opacity = interpolate(frame, [start, start + 10], [0, 1], {
+          const baseOpacity = interpolate(frame, [start, start + 10], [0, 1], {
             extrapolateLeft: "clamp",
             extrapolateRight: "clamp",
           });
@@ -224,6 +240,12 @@ export const CodeWalkthroughScene: React.FC<{ section: ScriptSection }> = ({ sec
             extrapolateLeft: "clamp",
             extrapolateRight: "clamp",
           });
+          // When a highlight is active, dim every OTHER line to 40% so the
+          // viewer's eye is pulled to the line the narrator is talking about.
+          const isHighlighted =
+            activeHighlight && activeHighlight.lineNumber === index + 1;
+          const dim = activeHighlight && !isHighlighted ? 0.4 : 1;
+          const opacity = baseOpacity * dim;
           return (
             <div
               key={index}
@@ -232,6 +254,7 @@ export const CodeWalkthroughScene: React.FC<{ section: ScriptSection }> = ({ sec
                 transform: `translateX(${slide}px)`,
                 position: "relative",
                 whiteSpace: "pre",
+                transition: "opacity 200ms ease-out",
               }}
             >
               <span
@@ -269,6 +292,7 @@ export const CodeWalkthroughScene: React.FC<{ section: ScriptSection }> = ({ sec
         )}
       </div>
 
+      </CameraMove>
       <Watermark />
     </AbsoluteFill>
   );
