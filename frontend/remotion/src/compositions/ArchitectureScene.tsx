@@ -66,15 +66,32 @@ export const ArchitectureScene: React.FC<{ section: ScriptSection }> = ({
   const connections = data.connections ?? [];
   const dataFlows = data.data_flows ?? [];
 
-  // Position each module. Module 0 = center. Modules 1-6 = inner ring.
-  // Modules 7+ = outer ring.
+  // Layout regions — explicit, no free positioning. Title gets the top
+  // strip, modules render in the lower region. Reserves a footer strip
+  // for the optional metadata rail.
+  //   title region   y = 70  .. 200
+  //   modules region y = 220 .. height - 140
+  const TITLE_REGION_BOTTOM = 200;
+  const FOOTER_RESERVE = 140;
+
+  // Position each module. Module 0 = centre of the modules region.
+  // Modules 1-6 = inner ring around it. Modules 7+ = outer ring.
+  // Box size shrinks as module count grows so we never collide.
   const placements = useMemo<Placement[]>(() => {
-    const boxW = 320;
-    const boxH = 140;
+    const n = modules.length;
+    // Auto-scale boxes when crowded. Cap minimum at 220x96 so labels stay
+    // readable.
+    const boxW = n > 6 ? 240 : 320;
+    const boxH = n > 6 ? 110 : 140;
     const cx0 = width / 2;
-    const cy0 = height / 2 + 30;
-    const innerR = 360;
-    const outerR = 580;
+    const modulesTop = TITLE_REGION_BOTTOM + 20;
+    const modulesBottom = height - FOOTER_RESERVE;
+    const cy0 = (modulesTop + modulesBottom) / 2;
+    // Max radius constrained so module 1 (at theta=-π/2 i.e. top) doesn't
+    // cross into the title region.
+    const maxRadiusFromTop = cy0 - modulesTop - boxH / 2 - 10;
+    const innerR = Math.min(n > 6 ? 320 : 360, maxRadiusFromTop);
+    const outerR = Math.min(560, maxRadiusFromTop + 220);
     return modules.map((_, index) => {
       if (index === ENTRY_RADIUS_ATTRACTOR) {
         return {
@@ -87,7 +104,7 @@ export const ArchitectureScene: React.FC<{ section: ScriptSection }> = ({
         };
       }
       const ringIndex = index <= 6 ? index : index - 6;
-      const ringCount = index <= 6 ? Math.min(modules.length - 1, 6) : Math.max(1, modules.length - 7);
+      const ringCount = index <= 6 ? Math.min(n - 1, 6) : Math.max(1, n - 7);
       const radius = index <= 6 ? innerR : outerR;
       // -90deg start so module 1 lands at the top
       const theta = -Math.PI / 2 + (2 * Math.PI * (ringIndex - 1)) / Math.max(1, ringCount);
@@ -167,7 +184,8 @@ export const ArchitectureScene: React.FC<{ section: ScriptSection }> = ({
       <Particles count={20} seed={modules.length * 41 + 1} speed={0.8} />
       <FocusGlow x={50} y={55} radius={70} intensity={0.07} />
 
-      {/* Title strip */}
+      {/* Title strip — fixed to the top region; module placements respect
+          its bottom boundary so they can't collide. */}
       <div
         style={{
           position: "absolute",
@@ -180,6 +198,19 @@ export const ArchitectureScene: React.FC<{ section: ScriptSection }> = ({
       >
         <div
           style={{
+            opacity: subtitleOpacity,
+            fontSize: 12,
+            color: COLORS.cyan,
+            textTransform: "uppercase",
+            fontFamily: FONT_MONO,
+            letterSpacing: 6,
+            marginBottom: 12,
+          }}
+        >
+          {(data.hint ?? "modules").toString().toUpperCase()}
+        </div>
+        <div
+          style={{
             opacity: titleOpacity,
             fontSize: 56,
             fontWeight: 700,
@@ -188,19 +219,6 @@ export const ArchitectureScene: React.FC<{ section: ScriptSection }> = ({
           }}
         >
           Architecture
-        </div>
-        <div
-          style={{
-            opacity: subtitleOpacity,
-            marginTop: 10,
-            fontSize: 22,
-            color: COLORS.cyan,
-            textTransform: "capitalize",
-            fontFamily: FONT_MONO,
-            letterSpacing: 4,
-          }}
-        >
-          {data.hint ?? "modules"}
         </div>
       </div>
 
