@@ -135,11 +135,46 @@ Return ONLY valid JSON (no prose, no code fences) with this exact structure:
     }
   ],
   "total_duration_seconds": number,
+  "why_it_matters": "string — ONE sentence that ties the takeaways back to the hook and makes the viewer feel that watching was worth their time. Specific, not generic. Example: if the hook was 'navigator.onLine lies', why_it_matters could be 'If you're checking online status in production, you're probably lying to your users without knowing it.'",
   "key_takeaways": ["string", "string", "string"]
 }
 
 You receive the full repo analysis as input. Use it. Quote actual file paths, actual function names, actual line numbers, actual decisions visible in the code. Generic narration that could apply to any codebase is failure.
 """
+
+# Spoken-word pass: final stage that smooths cadence for ear, not eye.
+# Runs after stop-slop has done its job — the narration is already specific
+# and opinionated, this just polishes the audio surface.
+SPOKEN_WORD_PROMPT = """You are doing a spoken-word pass on a video narration script. Imagine you're a podcast editor — find places where the audio will sound clunky and fix them.
+
+Specifically look for and fix:
+
+1. HARD TOPIC TRANSITIONS. If a sentence ends one thought and the next starts a new topic cold, add a bridge word or rewrite to create a pivot. Example bad → good:
+   BAD: "...and the result is two network requests. The library uses TypeScript."
+   GOOD: "...and the result is two network requests. Worth noting — it's all written in TypeScript, which..."
+
+2. REPETITIVE OPENINGS. If three sentences in a row start with the same word ("It's...", "It's...", "It's..." or "The...", "The...", "The..."), rewrite for variation.
+
+3. SOFT-END → HARD-START cadence breaks. If a sentence trails off softly and the next starts with a stressed syllable, either soften the start or strengthen the previous end.
+
+4. SENTENCES OVER 25 WORDS. Split, or add a comma where a natural breath would happen.
+
+5. WRITING-NOT-SPEAKING phrases. Replace:
+   - "Furthermore," → "Also,"
+   - "It should be noted that..." → cut entirely or rewrite as a casual aside
+   - "In order to..." → "to..."
+   - "Utilize" → "use"
+   - "Comprised of" → "made up of"
+
+6. ACRONYMS that ElevenLabs will mispronounce. Spell phonetically if needed (NPM → "N P M", URL → "U R L", JSON → "Jason", SQL → "sequel", OAuth → "O auth"). The pipeline does this for known acronyms already, but if you see an unusual one, spell it out.
+
+7. UNNECESSARY HEDGING. "Kind of," "sort of," "essentially," "basically" — kill them unless they are load-bearing for tone.
+
+8. STITCHED-TOGETHER FEEL. Read each section out loud (in your head). Does it sound like one continuous thought from one person? Or like a chain of disconnected statements? Rewrite for flow.
+
+Do NOT change the substance. Same facts, same opinions, same hook, same takeaways. Smooth the cadence.
+
+Return the polished script in the same JSON format. Return only the JSON — no commentary, no code fences."""
 
 # Revision pass: ask Claude to fix lines that trigger the slop heuristics.
 REVISION_PROMPT = """The script you just wrote has lines that read like AI slop. Rewrite them as a senior engineer would.
@@ -195,6 +230,9 @@ _SLOP_PATTERNS: tuple[re.Pattern, ...] = (
     re.compile(r"\bmoreover\b", re.IGNORECASE),
     re.compile(r"\bfurthermore\b", re.IGNORECASE),
     re.compile(r"\bessentially\b", re.IGNORECASE),
+    re.compile(r"\bbuilt on\b", re.IGNORECASE),
+    # Wikipedia / encyclopedia-style sentence openers
+    re.compile(r"(?:^|[.!?]\s)(?:Often referred to as|Known for|Renowned for|Notable for)\b"),
     # Marketing-speak / vague positives
     re.compile(r"\brobust\b", re.IGNORECASE),
     re.compile(r"\bseamless(?:ly)?\b", re.IGNORECASE),
@@ -210,8 +248,15 @@ _SLOP_PATTERNS: tuple[re.Pattern, ...] = (
     re.compile(r"\bembark on\b", re.IGNORECASE),
     re.compile(r"\bharness(?:es|ing)? the power\b", re.IGNORECASE),
     re.compile(r"\bnavigat(?:e|ing) the\b", re.IGNORECASE),
-    # Em-dash overload (2+ in one section)
-    re.compile(r"(?:.*—.*){2,}", re.DOTALL),
+    # Empty intensifiers — adverbs that add no information. Caught only when
+    # they precede another word so we don't trip on standalone "very" in
+    # quoted text. Bias toward false positives — revision pass is cheap.
+    re.compile(r"\b(?:very|really|extremely|quite|rather|fairly|pretty)\s+\w+", re.IGNORECASE),
+    # Hedging — undermines authority of a senior engineer's voice
+    re.compile(r"\b(?:kind of|sort of|basically|fundamentally)\b", re.IGNORECASE),
+    # Em-dash overload (3+ in one section). Single em-dash mid-sentence is
+    # fine; two is borderline; three or more reads as AI bingo.
+    re.compile(r"(?:.*—.*){3,}", re.DOTALL),
 )
 
 # Title/hook only — adverbs. Body narration can use them sparingly.
@@ -361,7 +406,71 @@ def _generate_with_claude(analysis: AnalysisResult, api_key: str) -> dict[str, A
             )
             section["narration"] = scrubbed
 
+    # Spoken-word pass — final polish for cadence. Runs even when the
+    # stop-slop heuristics found nothing, because awkward sentence
+    # transitions aren't pattern-matchable. One additional model call per
+    # job. Skipped if it fails so we still ship.
+    try:
+        parsed = _spoken_word_pass(client, parsed)
+        parsed["title"] = _scrub_title(parsed.get("title", ""))
+        logger.info("Spoken-word pass complete")
+    except Exception as exc:
+        logger.warning("Spoken-word pass failed, shipping pre-pass script: %s", exc)
+
     return _normalize(parsed, analysis)
+
+
+def _spoken_word_pass(client: Any, parsed: dict[str, Any]) -> dict[str, Any]:
+    """Send the current script back to Claude with the spoken-word prompt for
+    a cadence/flow polish. Substance must not change — only phrasing."""
+    sections_payload = [
+        {"id": s.get("id"), "narration": s.get("narration", "")}
+        for s in parsed.get("sections", [])
+    ]
+    payload = {
+        "title": parsed.get("title", ""),
+        "hook": parsed.get("hook", ""),
+        "sections": sections_payload,
+        "why_it_matters": parsed.get("why_it_matters", ""),
+        "key_takeaways": parsed.get("key_takeaways", []),
+    }
+    message = client.messages.create(
+        model="claude-sonnet-4-5",
+        max_tokens=2048,
+        system=SPOKEN_WORD_PROMPT,
+        messages=[
+            {
+                "role": "user",
+                "content": (
+                    "Polish this script for spoken cadence. Same facts and "
+                    "opinions, smoother flow. Return JSON.\n\n```json\n"
+                    + json.dumps(payload, indent=2)
+                    + "\n```"
+                ),
+            }
+        ],
+    )
+    polished = _extract_json(message)
+
+    # Merge: replace narrations + title + hook + why_it_matters +
+    # key_takeaways. Keep section-level visuals/duration intact.
+    if isinstance(polished.get("title"), str) and polished["title"].strip():
+        parsed["title"] = polished["title"].strip()
+    if isinstance(polished.get("hook"), str) and polished["hook"].strip():
+        parsed["hook"] = polished["hook"].strip()
+    if isinstance(polished.get("why_it_matters"), str):
+        parsed["why_it_matters"] = polished["why_it_matters"].strip()
+    if isinstance(polished.get("key_takeaways"), list):
+        parsed["key_takeaways"] = [
+            str(t).strip() for t in polished["key_takeaways"] if str(t).strip()
+        ]
+    by_id = {s.get("id"): s.get("narration", "") for s in polished.get("sections", [])}
+    for section in parsed.get("sections", []):
+        sid = section.get("id")
+        new_narr = by_id.get(sid, "").strip()
+        if new_narr:
+            section["narration"] = new_narr
+    return parsed
 
 
 def _scrub_title(title: str) -> str:
@@ -567,6 +676,10 @@ def _normalize(script: dict[str, Any], analysis: AnalysisResult) -> dict[str, An
     script.setdefault(
         "key_takeaways",
         _default_takeaways(analysis),
+    )
+    script.setdefault(
+        "why_it_matters",
+        f"If you're working with {analysis.repo.get('primary_language') or 'code'} in production, the patterns in this repo are worth stealing.",
     )
     script["total_duration_seconds"] = sum(
         int(s.get("duration_seconds") or 10) for s in ordered
