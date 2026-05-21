@@ -99,11 +99,12 @@ export const CodeWalkthroughScene: React.FC<{ section: ScriptSection }> = ({ sec
     (n) => n >= 1 && n <= lines.length,
   );
 
-  // The SCENE's frame budget = real audio length (set in Problem 1 by the
-  // worker's ffprobe pass) + 0.6s trailing buffer, rendered at FPS. Falling
-  // back to duration_seconds keeps preview renders sensible.
+  // The SCENE's frame budget = real audio length (set by the worker's
+  // ffprobe pass) + 1.0s trailing buffer. Falls back to duration_seconds
+  // for preview renders without props. Keep this in sync with
+  // SCENE_TRAILING_BUFFER_S in types.ts.
   const sceneSeconds =
-    (section.audio_duration_seconds ?? section.duration_seconds ?? 12) + 0.6;
+    (section.audio_duration_seconds ?? section.duration_seconds ?? 12) + 1.0;
   const sceneFrames = Math.round(sceneSeconds * fps);
 
   // Header springs in first
@@ -123,7 +124,7 @@ export const CodeWalkthroughScene: React.FC<{ section: ScriptSection }> = ({ sec
   const activeHighlight = useMemo(() => {
     if (highlights.length === 0) return null;
     const startFrame = 60;
-    const tail = Math.round(0.6 * FPS); // leave the buffer empty
+    const tail = Math.round(1.0 * FPS); // leave the trailing buffer empty
     const perHighlight = Math.max(
       30,
       Math.floor((sceneFrames - startFrame - tail) / highlights.length),

@@ -36,8 +36,10 @@ export interface AudioSegment {
 }
 
 /** Trailing silence appended to each scene so the last word of narration
- *  completes before the visual cut. 0.6 s = 18 frames at 30 fps. */
-export const SCENE_TRAILING_BUFFER_S = 0.6;
+ *  completes before the visual cut. 1.0 s after testing showed 0.6 s
+ *  occasionally clipped the final consonant. Better small silent gaps
+ *  than chopped narration. */
+export const SCENE_TRAILING_BUFFER_S = 1.0;
 /** Length of the visual crossfade between adjacent scenes. 0.3 s = 9 frames. */
 export const SCENE_TRANSITION_S = 0.3;
 

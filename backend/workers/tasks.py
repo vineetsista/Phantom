@@ -143,7 +143,7 @@ def generate_video(self, job_id: str, repo_url: str, options: dict[str, Any]) ->
         # narration was empty are dropped here, not silently rendered as
         # dead air. Per-section timing telemetry lands in the worker log so
         # we can spot drift between estimate and actual.
-        SCENE_TRAILING_BUFFER_S = 0.6
+        SCENE_TRAILING_BUFFER_S = 1.0
         SCENE_TRANSITION_S = 0.3
         voice_generator.apply_actual_durations(script, audio_files)
         for section in script.get("sections", []):

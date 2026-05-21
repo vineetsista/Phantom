@@ -122,7 +122,7 @@ def assemble(
     # minus the per-transition crossfade overlap. Falls back to the
     # estimated duration_seconds when audio_duration_seconds isn't set
     # (e.g. preview renders without props).
-    SCENE_TRAILING_BUFFER_S = 0.6
+    SCENE_TRAILING_BUFFER_S = 1.0
     SCENE_TRANSITION_S = 0.3
     sections = script.get("sections", [])
     scene_durations = [
