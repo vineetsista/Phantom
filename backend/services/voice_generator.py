@@ -66,40 +66,45 @@ _ELEVENLABS_LANGUAGE = "en"
 # something to watch when extending).
 _JARGON: dict[str, str] = {
     # ❌ Brian reads "npm" as "num". Force individual letters.
-    "npm": "N P M",
-    "URL": "U R L",
-    "URLs": "U R Ls",
-    "url": "U R L",
-    "urls": "U R Ls",
-    "API": "A P I",
-    "APIs": "A P I's",
-    "api": "A P I",
-    "apis": "A P I's",
-    "SQL": "sequel",       # industry convention
+    # v6 — switched from letter-spaced ("H T T P") to PHONETIC spellings
+    # ("aitch tee tee pee"). Letter spacing made ElevenLabs read pairs of
+    # letters as syllables with audible mid-word gaps — user reported
+    # "HT...long pause...TP" for HTTP. Phonetics tell the model the actual
+    # sound, eliminating the gap.
+    "npm": "en pee em",
+    "URL": "you are ell",
+    "URLs": "you are ells",
+    "url": "you are ell",
+    "urls": "you are ells",
+    "API": "ay pee eye",
+    "APIs": "ay pee eyes",
+    "api": "ay pee eye",
+    "apis": "ay pee eyes",
+    "SQL": "sequel",
     "JSON": "Jason",
-    "YAML": "yamel",
-    "OAuth": "O auth",
+    "YAML": "yammel",
+    "OAuth": "oh-auth",
     "i18n": "internationalization",
     "l10n": "localization",
     "k8s": "Kubernetes",
-    "GCP": "G C P",
-    "AWS": "A W S",
-    "S3": "S three",
-    "EC2": "E C two",
-    "REST": "REST",        # already pronounced as a word
-    "GraphQL": "graph Q L",
-    "JWT": "J W T",
-    "JWTs": "J W T's",
-    "CLI": "C L I",
-    "TLS": "T L S",
-    "SSL": "S S L",
-    "DNS": "D N S",
-    "CDN": "C D N",
-    "CI/CD": "C I C D",
-    "CSS": "C S S",
-    "HTML": "H T M L",
-    "HTTP": "H T T P",     # otherwise read as "h-t-t-p" with awkward break
-    "HTTPS": "H T T P S",  # user reported pause mid-word; force consistent spell
+    "GCP": "gee cee pee",
+    "AWS": "ay double-you ess",
+    "S3": "ess three",
+    "EC2": "ee cee two",
+    "REST": "REST",
+    "GraphQL": "graph kew ell",
+    "JWT": "jay double-you tee",
+    "JWTs": "jay double-you tees",
+    "CLI": "cee ell eye",
+    "TLS": "tee ell ess",
+    "SSL": "ess ess ell",
+    "DNS": "dee en ess",
+    "CDN": "cee dee en",
+    "CI/CD": "cee eye cee dee",
+    "CSS": "cee ess ess",
+    "HTML": "aitch tee em ell",
+    "HTTP": "aitch tee tee pee",
+    "HTTPS": "aitch tee tee pee ess",
     # NOTE — formerly forced TS/JS/TSX/JSX to letter-by-letter spelling.
     # Removed: ElevenLabs reads "utils.js" natively with a brief pause
     # at the dot, which sounds more natural than the forced "dot T S"
@@ -108,49 +113,47 @@ _JARGON: dict[str, str] = {
     # plain words ("tiss" / "jiss") and Claude usually inflects them
     # as "TypeScript" / "JavaScript" anyway.
     "TypeScript": "TypeScript",  # explicit so dictionary lookups don't truncate
-    "ESM": "E S M",
-    "CommonJS": "common J S",
-    "CJS": "C J S",
+    "ESM": "ee ess em",
+    "CommonJS": "common jay ess",
+    "CJS": "cee jay ess",
     "Postgres": "Postgress",  # otherwise reads as "Post-grease"
     "PostgreSQL": "Postgress",
     "Redis": "Red-iss",
     "nginx": "engine X",
     "regex": "reg-ex",
-    "AI": "A I",
-    "LLM": "L L M",
-    "LLMs": "L L M's",
-    "GPT": "G P T",
-    "IDE": "I D E",
-    "IDEs": "I D E's",
-    "MVP": "M V P",
-    "MVPs": "M V P's",
-    "PR": "P R",
-    "PRs": "P R's",
-    "SDK": "S D K",
-    "SDKs": "S D K's",
-    "CRUD": "CRUD",  # pronounced as word
-    "RPC": "R P C",
-    "gRPC": "G R P C",
-    "MIT": "M I T",
-    "TCP": "T C P",
-    "UDP": "U D P",
-    "ID": "I D",
-    "UUID": "U U I D",
-    "UUIDs": "U U I D's",
+    "AI": "ay eye",
+    "LLM": "ell ell em",
+    "LLMs": "ell ell ems",
+    "GPT": "gee pee tee",
+    "IDE": "eye dee ee",
+    "IDEs": "eye dee ees",
+    "MVP": "em vee pee",
+    "MVPs": "em vee pees",
+    "PR": "pee are",
+    "PRs": "pee ares",
+    "SDK": "ess dee kay",
+    "SDKs": "ess dee kays",
+    "CRUD": "CRUD",
+    "RPC": "are pee cee",
+    "gRPC": "gee are pee cee",
+    "MIT": "em eye tee",
+    "TCP": "tee cee pee",
+    "UDP": "you dee pee",
+    "ID": "eye dee",
+    "UUID": "you you eye dee",
+    "UUIDs": "you you eye dees",
     "vs.": "versus",
     "vs": "versus",
     "e.g.": "for example",
     "i.e.": "that is",
-    "WIP": "W I P",
-    # HTTP verbs — Brian spells them with weird mid-letter pauses
-    # ("GE...T", "PO...ST"). Forcing explicit letter spacing makes the
-    # cadence consistent.
-    "GET": "G E T",
-    "POST": "P O S T",
-    "PUT": "P U T",
-    "DELETE": "D E L E T E",
-    "PATCH": "P A T C H",
-    "HEAD": "H E A D",
+    "WIP": "double-you eye pee",
+    # HTTP verbs — phonetic. Letter-spaced ("G E T") read with mid-letter
+    # gap; phonetic ("gee ee tee") reads as one fluid utterance.
+    "GET": "gee ee tee",
+    "POST": "pee oh ess tee",
+    # PUT/DELETE/PATCH/HEAD are real English words — ElevenLabs handles
+    # them natively. Removed forced spellings in v6.
+    # ("p, any" stays — ElevenLabs reads "p-any" as "panny" otherwise.)
     # npm package names with a single-letter prefix and a dash. Brian
     # reads them as portmanteau words ("panny" for p-any). Forcing a
     # comma + space makes it read as "p, any" with a clear pause.
@@ -1010,16 +1013,32 @@ def sync_visuals_to_alignment(
             # alignment signal entirely. Weight tuned empirically — 30%
             # gives noticeable smoothing while keeping alignment-matched
             # modules within ~1-2s of their spoken-word position.
+            # v6 — user reported sync drifts toward END of architecture scene.
+            # Root cause: uniform 30% blend pulled the LAST 1-2 modules
+            # toward their ideal positions (near audio_end) regardless of
+            # whether alignment had already placed them correctly. When
+            # alignment correctly placed module N-1 at, say, 35s of a 40s
+            # audio, blend toward ideal at ((N-1)/N)*40 = 32s pulled it
+            # 3s EARLIER than alignment said. Cumulatively that desyncs
+            # the visual from the spoken narration in the second half.
+            #
+            # Fix: blend weight DECAYS for later modules. First module
+            # gets full blend (early modules tend to be most off because
+            # alignment relies on file/identifier names that may not be
+            # spoken). Last module gets near-zero blend — alignment is
+            # usually most reliable for the last-mentioned thing.
             if audio_dur > 0 and len(modules) >= 3:
-                blend_weight = 0.30
                 for i, m in enumerate(modules):
+                    # Weight decays from 0.30 at i=0 to 0.05 at i=N-1.
+                    progress = i / max(1, len(modules) - 1)
+                    blend_weight = 0.30 * (1.0 - progress) + 0.05 * progress
                     actual = float(m.get("narration_start_seconds") or 0.0)
                     ideal = (i * audio_dur) / len(modules) + 0.3
                     blended = round((1 - blend_weight) * actual + blend_weight * ideal, 2)
                     if abs(blended - actual) > 0.1:
                         logger.info(
-                            "Ideal-blend: module %d (%s) %.2fs -> %.2fs (ideal %.2fs)",
-                            i, m.get("label"), actual, blended, ideal,
+                            "Ideal-blend: module %d (%s) %.2fs -> %.2fs (ideal %.2fs, weight %.2f)",
+                            i, m.get("label"), actual, blended, ideal, blend_weight,
                         )
                     m["narration_start_seconds"] = blended
 
@@ -1244,11 +1263,13 @@ def sync_visuals_to_alignment(
                             )
                     i = j + 1
 
-            # IDEAL-POSITION BLEND for highlights (same algorithm as
-            # for architecture above).
+            # IDEAL-POSITION BLEND for highlights — decayed weight, same
+            # rationale as architecture: alignment is most reliable for
+            # the last-mentioned thing, so don't override it.
             if audio_dur_c > 0 and len(highlights) >= 3:
-                blend_weight_h = 0.30
                 for i, h in enumerate(highlights):
+                    progress = i / max(1, len(highlights) - 1)
+                    blend_weight_h = 0.30 * (1.0 - progress) + 0.05 * progress
                     actual = float(h.get("narration_start_seconds") or 0.0)
                     ideal = (i * audio_dur_c) / len(highlights) + 0.3
                     blended = round((1 - blend_weight_h) * actual + blend_weight_h * ideal, 2)

@@ -50,10 +50,14 @@ const TITLE_BAR_HEIGHT = 44;
 // across resolutions. Resolved to pixels inside the component via
 // useVideoConfig().
 const PANEL_INSET_PCT = {
-  left: 0.07,   // ~90px @ 1280, ~134px @ 1920
-  right: 0.20,  // 256px @ 1280, 384px @ 1920 — leaves room for annotation card
-  top: 0.28,    // 200px @ 720,  300px @ 1080
-  bottom: 0.18, // 130px @ 720,  194px @ 1080
+  left: 0.06,   // ~77px @ 1280, ~115px @ 1920
+  // Right inset bumped from 0.20 → 0.24 in v6 so the annotation card
+  // ALWAYS has room on the right at 720p. Previous: annotation flipped
+  // left whenever right would clip → card overlapped the code panel's
+  // left edge → user-reported "explanation box hovers over the code."
+  right: 0.24,
+  top: 0.28,
+  bottom: 0.18,
 };
 
 const PALETTE = {
@@ -778,17 +782,26 @@ const Annotation: React.FC<{
   const safeText =
     text.length > 50 ? text.slice(0, text.lastIndexOf(" ", 48)).trim() + "…" : text;
 
-  // Card geometry. Width is fixed at 240 (per user spec). Frame margin is
-  // 40px on either side.
-  const CARD_WIDTH = 240;
-  const FRAME_MARGIN = 40;
-  const GAP = 36;
+  // Card geometry. Width scales with viewport (240px at 1920, 180px at
+  // 1280) so the annotation never eats the code panel at smaller
+  // resolutions. Frame margin proportional.
+  const CARD_WIDTH = Math.max(160, Math.round(compWidth * 0.16));
+  const FRAME_MARGIN = Math.round(compWidth * 0.025);
+  const GAP = Math.round(compWidth * 0.025);
   const cardTop = lineY - 26;
 
-  // Decide side. Prefer RIGHT; flip to LEFT if right would extend past
-  // (compWidth - FRAME_MARGIN).
-  const wouldClipRight = panelRightEdge + GAP + CARD_WIDTH > compWidth - FRAME_MARGIN;
-  const placeOnLeft = wouldClipRight;
+  // Decide side. STRONG preference for RIGHT. Only flip left if right
+  // CLEARLY doesn't fit — with the new inset percentages there should
+  // always be room on the right. If the card would clip on the right
+  // by a small amount, we'd rather it hugs the frame edge than
+  // overlap the code panel on the left.
+  const rightCardLeft = panelRightEdge + GAP;
+  const wouldClipRight = rightCardLeft + CARD_WIDTH > compWidth - FRAME_MARGIN;
+  // Place on left ONLY if right-side overflow is severe (>50px) AND
+  // there's room on the left. Otherwise: stick to the right and let
+  // the clamp below pull the card just inside the frame.
+  const rightOverflow = (rightCardLeft + CARD_WIDTH) - (compWidth - FRAME_MARGIN);
+  const placeOnLeft = wouldClipRight && rightOverflow > 50 && panelLeftEdge >= GAP + CARD_WIDTH + FRAME_MARGIN;
   const cardLeft = placeOnLeft
     ? panelLeftEdge - GAP - CARD_WIDTH
     : panelRightEdge + GAP;
