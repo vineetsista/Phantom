@@ -56,6 +56,12 @@ class Video(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
+    # v6 — account ownership + visibility. user_id nullable for backwards
+    # compatibility with existing rows (pre-auth). visibility default
+    # 'public' so existing videos remain discoverable on profile pages.
+    user_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    visibility: Mapped[str] = mapped_column(String(16), default="public")
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
@@ -80,4 +86,6 @@ class Video(Base):
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
             "script_data": self.script_data,
             "analysis_data": self.analysis_data,
+            "user_id": self.user_id,
+            "visibility": self.visibility,
         }
