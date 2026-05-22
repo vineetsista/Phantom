@@ -16,7 +16,9 @@ celery_app.conf.update(
     result_serializer="json",
     accept_content=["json"],
     task_track_started=True,
-    task_time_limit=20 * 60,
-    task_soft_time_limit=18 * 60,
+    # 30/28 min — zod's render of 8 modules + ~190s of code can exceed
+    # the previous 18 min soft limit on CPU-constrained hosts.
+    task_time_limit=30 * 60,
+    task_soft_time_limit=28 * 60,
     worker_prefetch_multiplier=1,
 )

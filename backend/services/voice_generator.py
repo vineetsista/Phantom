@@ -818,20 +818,31 @@ def sync_visuals_to_alignment(
             )
 
             # Fallback for unanchored modules: distribute them PROPORTIONALLY
-            # between the surrounding anchored modules. Narration is linear,
-            # so an unanchored module between anchored neighbours at t=4s and
-            # t=24s should land somewhere between them — not at whatever
-            # Claude originally guessed (which the user saw out of sync by
-            # 6-10 seconds in the zod render).
-            #
-            # Algorithm: scan modules in order. For each unanchored run,
-            # interpolate between the last anchored timestamp and the next
-            # anchored timestamp (or the audio end for trailing tails).
+            # between the surrounding anchored modules.
             audio_dur = 0.0
             for a in audio_files:
                 if a.get("section_id") == sid:
                     audio_dur = float(a.get("audio_duration_seconds") or 0.0)
                     break
+
+            # LATE-ANCHOR SANITY CHECK (same heuristic as code-walkthrough).
+            # If module 0 anchored past 40% of audio, the alignment found a
+            # late mention and we'd cram every subsequent module into the
+            # tail. Drop all anchors and use even distribution.
+            if module_times and audio_dur > 0:
+                first_module_id = (modules[0].get("id") or "") if modules else ""
+                if first_module_id in module_times:
+                    first_t = module_times[first_module_id]
+                    if first_t > audio_dur * 0.4:
+                        logger.info(
+                            "Architecture late-anchor cluster: module 0 anchored at %.2fs (%.0f%% of %.1fs) — dropping all anchors",
+                            first_t, first_t / audio_dur * 100, audio_dur,
+                        )
+                        module_times.clear()
+                        # Reset narration_start_seconds — fallback below
+                        # will re-fill from scratch.
+                        for m in modules:
+                            m.pop("narration_start_seconds", None)
 
             anchored_idx = [i for i, m in enumerate(modules)
                             if (m.get("id") or "") in module_times]
@@ -959,28 +970,45 @@ def sync_visuals_to_alignment(
                     anchored[i] = t
                     taken_h.add(round(t, 2))
 
-            # Final monotonicity pass — Remotion's interpolate requires
-            # strictly monotonic input ranges. Walk through highlights in
-            # order, bump any timestamp that's <= the previous one to be
-            # at least 0.5s later. This keeps the narration_start_seconds
-            # ordering consistent even if alignment matching produced
-            # close or out-of-order values.
-            prev_t = -1.0
-            for h in highlights:
-                t = float(h.get("narration_start_seconds") or 0.0)
-                if t <= prev_t:
-                    t = round(prev_t + 0.5, 2)
-                    h["narration_start_seconds"] = t
-                prev_t = t
-
-            # Fallback for unanchored highlights: distribute proportionally
-            # between surrounding anchored ones. Same algorithm as the
-            # architecture scene above.
+            # Get audio duration for sanity checks below.
             audio_dur_c = 0.0
             for a in audio_files:
                 if a.get("section_id") == sid:
                     audio_dur_c = float(a.get("audio_duration_seconds") or 0.0)
                     break
+
+            # LATE-ANCHOR SANITY CHECK. If the FIRST anchored highlight lands
+            # past 50% of the audio, the alignment found a late mention of
+            # something — usually because the concept is mentioned only once
+            # near the end of the narration. Keeping that anchor would cause
+            # my proportional fallback to cram every later highlight into
+            # the tail of the section. (Caught on is-online v4: all 4
+            # highlights crammed into the last 5s of 43s.)
+            #
+            # Heuristic: if the EARLIEST anchored highlight is past 50% of
+            # audio_dur AND there are unanchored highlights before it, drop
+            # all anchors and treat as fully unanchored. The even
+            # distribution that follows produces much better visual sync
+            # than honoring a single late match.
+            if anchored and audio_dur_c > 0:
+                earliest_idx = min(anchored.keys())
+                earliest_t = anchored[earliest_idx]
+                # First-highlight cutoff: 40% of audio. Catches the case
+                # where the first highlight in narration order anchored
+                # too late.
+                if earliest_idx == 0 and earliest_t > audio_dur_c * 0.4:
+                    logger.info(
+                        "Late-anchor cluster: first highlight anchored at %.2fs (%.0f%% of %.1fs audio) — dropping all anchors and using even distribution",
+                        earliest_t, earliest_t / audio_dur_c * 100, audio_dur_c,
+                    )
+                    anchored.clear()
+                    taken_h.clear()
+                    for h in highlights:
+                        h.pop("narration_start_seconds", None)
+
+            # Fallback distribution for unanchored highlights (runs BEFORE
+            # the monotonicity pass — otherwise monotonicity bumps would
+            # corrupt Claude's original timestamps before we replace them).
             anchored_idx_c = sorted(anchored.keys())
             for i, h in enumerate(highlights):
                 if i in anchored:
@@ -1012,6 +1040,18 @@ def sync_visuals_to_alignment(
                     i, h.get("narration_start_seconds"), interp,
                 )
                 h["narration_start_seconds"] = interp
+
+            # Final monotonicity pass — Remotion's interpolate requires
+            # strictly monotonic input ranges. Walk through highlights in
+            # order, bump any timestamp that's <= the previous one to be
+            # at least 0.5s later.
+            prev_t = -1.0
+            for h in highlights:
+                t = float(h.get("narration_start_seconds") or 0.0)
+                if t <= prev_t:
+                    t = round(prev_t + 0.5, 2)
+                    h["narration_start_seconds"] = t
+                prev_t = t
 
             logger.info(
                 "Sync code_walkthrough: %d/%d highlights anchored to alignment data",
