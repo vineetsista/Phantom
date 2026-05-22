@@ -926,6 +926,34 @@ def sync_visuals_to_alignment(
                     m["narration_start_seconds"] = t
                 prev_t = t
 
+            # GAP-SMOOTHER. If any single inter-module gap is more than
+            # 2.5x the average slot, the alignment dropped that module
+            # far from its neighbours (zod v5: 32s gap between module 1
+            # and module 2 of a 78s/6-module audio — 6x the avg). Pull
+            # subsequent modules toward an even distribution.
+            if audio_dur > 0 and len(modules) >= 4:
+                avg_slot = audio_dur / max(1, len(modules))
+                max_gap = avg_slot * 2.5
+                for i in range(1, len(modules)):
+                    prev_t = float(modules[i - 1].get("narration_start_seconds") or 0)
+                    cur_t = float(modules[i].get("narration_start_seconds") or 0)
+                    gap = cur_t - prev_t
+                    if gap > max_gap:
+                        # Pull this module's start back toward avg_slot
+                        # after the previous one. Don't pull farther
+                        # than 50% of the original gap (preserves some
+                        # alignment signal).
+                        ideal = prev_t + avg_slot
+                        new_t = round((cur_t + ideal) / 2, 2)
+                        # Don't push later modules — shift only this one
+                        # and let later modules cascade naturally via
+                        # monotonicity bump (below).
+                        logger.info(
+                            "Gap-smoother: module %d (%s) %.2fs -> %.2fs (gap was %.2fs, max %.2fs)",
+                            i, modules[i].get("label"), cur_t, new_t, gap, max_gap,
+                        )
+                        modules[i]["narration_start_seconds"] = new_t
+
             # TAIL-CLUSTER DETECTION. Even with everything above, alignment can
             # produce a configuration where several adjacent modules cluster
             # within a tight window — most often near the end of the audio,
@@ -974,6 +1002,17 @@ def sync_visuals_to_alignment(
                                 i, j, old, new, audio_dur,
                             )
                     i = j + 1
+
+            # FINAL monotonicity pass — tail-cluster and gap-smoother
+            # can leave timestamps out of order. Re-enforce ordering as
+            # the last step so Remotion never sees non-monotonic input.
+            prev_t = -1.0
+            for m in modules:
+                t = float(m.get("narration_start_seconds") or 0.0)
+                if t <= prev_t:
+                    t = round(prev_t + 0.5, 2)
+                    m["narration_start_seconds"] = t
+                prev_t = t
 
         elif sid == "code_walkthrough":
             highlights = data.get("highlights") or []
@@ -1130,6 +1169,24 @@ def sync_visuals_to_alignment(
                     h["narration_start_seconds"] = t
                 prev_t = t
 
+            # GAP-SMOOTHER for highlights. Same logic as architecture.
+            # is-online v5 had a 25.7s gap between L47 and L75; zod had
+            # a 47.6s gap between L22 and L24 (basically the whole audio).
+            if audio_dur_c > 0 and len(highlights) >= 3:
+                avg_slot_c2 = audio_dur_c / max(1, len(highlights))
+                max_gap_c = avg_slot_c2 * 2.5
+                for i in range(1, len(highlights)):
+                    prev_t = float(highlights[i - 1].get("narration_start_seconds") or 0)
+                    cur_t = float(highlights[i].get("narration_start_seconds") or 0)
+                    if cur_t - prev_t > max_gap_c:
+                        ideal = prev_t + avg_slot_c2
+                        new_t = round((cur_t + ideal) / 2, 2)
+                        logger.info(
+                            "Gap-smoother (highlights): L%s %.2fs -> %.2fs",
+                            highlights[i].get("line_number"), cur_t, new_t,
+                        )
+                        highlights[i]["narration_start_seconds"] = new_t
+
             # TAIL-CLUSTER DETECTION for highlights — same algorithm as
             # the architecture scene above. If 3+ consecutive highlights
             # land within a tight window, redistribute them across more
@@ -1165,6 +1222,16 @@ def sync_visuals_to_alignment(
                                 i, j, old, new,
                             )
                     i = j + 1
+
+            # FINAL monotonicity pass for highlights (same reasoning as
+            # for architecture above).
+            prev_t = -1.0
+            for h in highlights:
+                t = float(h.get("narration_start_seconds") or 0.0)
+                if t <= prev_t:
+                    t = round(prev_t + 0.5, 2)
+                    h["narration_start_seconds"] = t
+                prev_t = t
 
             logger.info(
                 "Sync code_walkthrough: %d/%d highlights anchored to alignment data",
