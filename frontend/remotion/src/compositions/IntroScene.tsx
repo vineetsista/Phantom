@@ -10,11 +10,8 @@ import {
 import { AnimatedCounter } from "../components/AnimatedCounter";
 import { BackgroundGrid } from "../components/BackgroundGrid";
 import { CameraMove } from "../components/CameraMove";
-import { ChromaticGlitch } from "../components/ChromaticGlitch";
-import { CodeRain } from "../components/CodeRain";
 import { FocusGlow } from "../components/FocusGlow";
 import { LogoMark } from "../components/LogoMark";
-import { Particles } from "../components/Particles";
 import { TypewriterText } from "../components/TypewriterText";
 import { Watermark } from "../components/Watermark";
 import { formatRelative, formatYear } from "../components/formatDate";
@@ -60,16 +57,14 @@ export const IntroScene: React.FC<{ section: ScriptSection }> = ({ section }) =>
 
   return (
     <AbsoluteFill>
-      {/* Far layer: grid + radial glow (already inside BackgroundGrid). */}
+      {/* Single background layer. Previous version stacked grid + particles
+          + code rain + chromatic glitch + camera pan — every effect competing
+          for the same attention budget. The v2 brief was explicit: kill the
+          noise, let the title carry the moment. */}
       <BackgroundGrid />
-      {/* Mid layer: drifting particles. Atmosphere, not content. */}
-      <Particles count={28} seed={Math.floor((data?.title ?? "x").length * 17)} />
-      {/* Near layer: blurred code rain, slowest visual element. */}
-      <CodeRain />
-      {/* Focus glow draws the eye to where the title will land. */}
-      <FocusGlow x={50} y={48} radius={55} intensity={0.10} />
+      <FocusGlow x={50} y={48} radius={55} intensity={0.08} />
 
-      <CameraMove pan="right" intensity={0.85}>
+      <CameraMove pan="right" intensity={0.4}>
         <AbsoluteFill style={center}>
           <LogoMark size={120} startFrame={logoStart} />
 
@@ -84,12 +79,7 @@ export const IntroScene: React.FC<{ section: ScriptSection }> = ({ section }) =>
               color: COLORS.cyan,
             }}
           >
-            {/* One brief chromatic glitch in the opening seconds — signals
-                "this is a generated video" without belaboring the point.
-                Triggers at frame ~24, ~6 frames after the kicker fades in. */}
-            <ChromaticGlitch startFrame={kickerStart + 6} durationFrames={6} amplitude={5}>
-              PHANTOM · REPOX
-            </ChromaticGlitch>
+            PHANTOM · REPOX
           </div>
 
           <div
