@@ -171,7 +171,15 @@ export function VideoPlayer({ src, poster, chapters = [], className }: VideoPlay
       if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
         return;
       }
-      switch (event.key.toLowerCase()) {
+      const key = event.key.toLowerCase();
+      // Number keys 0-9 jump to N×10% of the video. Handled before the
+      // switch so we don't enumerate ten cases.
+      if (/^[0-9]$/.test(key) && duration > 0) {
+        event.preventDefault();
+        seek(duration * (Number(key) / 10));
+        return;
+      }
+      switch (key) {
         case " ":
         case "k":
           event.preventDefault();
@@ -195,6 +203,21 @@ export function VideoPlayer({ src, poster, chapters = [], className }: VideoPlay
         case "arrowright":
           seek(time + 5);
           break;
+        case "arrowup": {
+          event.preventDefault();
+          const v = videoRef.current;
+          if (v) {
+            v.volume = Math.min(1, v.volume + 0.1);
+            if (v.muted && v.volume > 0) v.muted = false;
+          }
+          break;
+        }
+        case "arrowdown": {
+          event.preventDefault();
+          const v = videoRef.current;
+          if (v) v.volume = Math.max(0, v.volume - 0.1);
+          break;
+        }
         case "?":
           setShowShortcuts((v) => !v);
           break;
@@ -202,7 +225,7 @@ export function VideoPlayer({ src, poster, chapters = [], className }: VideoPlay
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [togglePlay, toggleMute, enterFullscreen, seek, time]);
+  }, [togglePlay, toggleMute, enterFullscreen, seek, time, duration]);
 
   /* --- Idle auto-hide of controls --------------------------------------- */
   const bumpIdle = useCallback(() => {
@@ -553,6 +576,8 @@ function ShortcutsOverlay({ onClose }: { onClose: () => void }) {
     ["Space / K", "Play · Pause"],
     ["J · L", "Jump back · forward 10s"],
     ["← · →", "Step back · forward 5s"],
+    ["↑ · ↓", "Volume up · down"],
+    ["0 – 9", "Jump to 0% – 90%"],
     ["M", "Mute"],
     ["F", "Fullscreen"],
     ["?", "Toggle this overlay"],
