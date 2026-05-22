@@ -86,6 +86,31 @@ def _iter_file(path: Path, start: int, end: int) -> Generator[bytes, None, None]
             yield data
 
 
+@app.head("/media/videos/{filename:path}")
+async def head_video(filename: str) -> StreamingResponse:
+    """HEAD support — some clients (curl -I, link previewers) probe before
+    fetching. Returning 405 made our Range diagnostics noisier than they
+    needed to be."""
+    base = Path(settings.video_output_dir).resolve()
+    target = (base / filename).resolve()
+    try:
+        target.relative_to(base)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Not found")
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="Not found")
+    file_size = target.stat().st_size
+    return StreamingResponse(
+        iter(()),
+        media_type="video/mp4",
+        headers={
+            "Accept-Ranges": "bytes",
+            "Content-Length": str(file_size),
+            "Cache-Control": "public, max-age=3600",
+        },
+    )
+
+
 @app.get("/media/videos/{filename:path}")
 async def serve_video(filename: str, request: Request) -> StreamingResponse:
     """Range-aware MP4 server. Required for HTML5 <video> timeline seeking."""
