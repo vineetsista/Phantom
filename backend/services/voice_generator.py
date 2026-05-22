@@ -878,6 +878,15 @@ def sync_visuals_to_alignment(
                 )
                 m["narration_start_seconds"] = interp
 
+            # Final monotonicity pass — same as code-walkthrough above.
+            prev_t = -1.0
+            for m in modules:
+                t = float(m.get("narration_start_seconds") or 0.0)
+                if t <= prev_t:
+                    t = round(prev_t + 0.5, 2)
+                    m["narration_start_seconds"] = t
+                prev_t = t
+
         elif sid == "code_walkthrough":
             highlights = data.get("highlights") or []
             anchored: dict[int, float] = {}  # index -> timestamp
@@ -949,6 +958,20 @@ def sync_visuals_to_alignment(
                     h["narration_start_seconds"] = round(t, 2)
                     anchored[i] = t
                     taken_h.add(round(t, 2))
+
+            # Final monotonicity pass — Remotion's interpolate requires
+            # strictly monotonic input ranges. Walk through highlights in
+            # order, bump any timestamp that's <= the previous one to be
+            # at least 0.5s later. This keeps the narration_start_seconds
+            # ordering consistent even if alignment matching produced
+            # close or out-of-order values.
+            prev_t = -1.0
+            for h in highlights:
+                t = float(h.get("narration_start_seconds") or 0.0)
+                if t <= prev_t:
+                    t = round(prev_t + 0.5, 2)
+                    h["narration_start_seconds"] = t
+                prev_t = t
 
             # Fallback for unanchored highlights: distribute proportionally
             # between surrounding anchored ones. Same algorithm as the

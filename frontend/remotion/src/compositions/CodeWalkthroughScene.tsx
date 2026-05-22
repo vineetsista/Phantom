@@ -738,11 +738,26 @@ const Annotation: React.FC<{
   compWidth: number;
 }> = ({ text, startFrame, endFrame, lineY, panelLeftEdge, panelRightEdge, compWidth }) => {
   const frame = useCurrentFrame();
-  // Fade in over 9 frames (~300ms), hold, fade out over 21 frames (~700ms).
-  const fadeOutStart = endFrame - 21;
+  // Ideal: fade in over 9 frames (~300ms), hold, fade out over 21 frames
+  // (~700ms). When the highlight window is shorter than 30 frames (which
+  // can happen when alignment-based timings are close together — e.g. two
+  // highlights mentioned within ~1s in the narration), the four-point
+  // interpolation input would be non-monotonic (start+9 > end-21) and
+  // Remotion throws "inputRange must be strictly monotonically increasing".
+  // Compress the fade durations proportionally so monotonicity is
+  // guaranteed even on tight windows.
+  const totalFrames = Math.max(1, endFrame - startFrame);
+  const fadeIn = Math.min(9, Math.floor(totalFrames * 0.3));
+  const fadeOut = Math.min(21, Math.floor(totalFrames * 0.4));
+  const fadeOutStart = endFrame - fadeOut;
+  // Final safety: ensure each input is strictly greater than the previous.
+  const k1 = startFrame;
+  const k2 = startFrame + Math.max(1, fadeIn);
+  const k3 = Math.max(k2 + 1, fadeOutStart);
+  const k4 = Math.max(k3 + 1, endFrame);
   const opacity = interpolate(
     frame,
-    [startFrame, startFrame + 9, fadeOutStart, endFrame],
+    [k1, k2, k3, k4],
     [0, 1, 1, 0],
     { extrapolateLeft: "clamp", extrapolateRight: "clamp" },
   );
