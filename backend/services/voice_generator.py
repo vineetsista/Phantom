@@ -1003,9 +1003,30 @@ def sync_visuals_to_alignment(
                             )
                     i = j + 1
 
-            # FINAL monotonicity pass — tail-cluster and gap-smoother
-            # can leave timestamps out of order. Re-enforce ordering as
-            # the last step so Remotion never sees non-monotonic input.
+            # IDEAL-POSITION BLEND. After alignment + gap-smoother +
+            # tail-cluster, each module's timestamp is blended 30% toward
+            # its ideal even-distribution position (i * audio_dur / N).
+            # This evens out residual unevenness without nuking the
+            # alignment signal entirely. Weight tuned empirically — 30%
+            # gives noticeable smoothing while keeping alignment-matched
+            # modules within ~1-2s of their spoken-word position.
+            if audio_dur > 0 and len(modules) >= 3:
+                blend_weight = 0.30
+                for i, m in enumerate(modules):
+                    actual = float(m.get("narration_start_seconds") or 0.0)
+                    ideal = (i * audio_dur) / len(modules) + 0.3
+                    blended = round((1 - blend_weight) * actual + blend_weight * ideal, 2)
+                    if abs(blended - actual) > 0.1:
+                        logger.info(
+                            "Ideal-blend: module %d (%s) %.2fs -> %.2fs (ideal %.2fs)",
+                            i, m.get("label"), actual, blended, ideal,
+                        )
+                    m["narration_start_seconds"] = blended
+
+            # FINAL monotonicity pass — tail-cluster, gap-smoother, and
+            # ideal-blend can all leave timestamps out of order.
+            # Re-enforce strict monotonicity as the last step so Remotion
+            # never sees non-monotonic input.
             prev_t = -1.0
             for m in modules:
                 t = float(m.get("narration_start_seconds") or 0.0)
@@ -1222,6 +1243,16 @@ def sync_visuals_to_alignment(
                                 i, j, old, new,
                             )
                     i = j + 1
+
+            # IDEAL-POSITION BLEND for highlights (same algorithm as
+            # for architecture above).
+            if audio_dur_c > 0 and len(highlights) >= 3:
+                blend_weight_h = 0.30
+                for i, h in enumerate(highlights):
+                    actual = float(h.get("narration_start_seconds") or 0.0)
+                    ideal = (i * audio_dur_c) / len(highlights) + 0.3
+                    blended = round((1 - blend_weight_h) * actual + blend_weight_h * ideal, 2)
+                    h["narration_start_seconds"] = blended
 
             # FINAL monotonicity pass for highlights (same reasoning as
             # for architecture above).
