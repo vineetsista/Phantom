@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 
 from config import get_settings
 from models import init_db
-from routers import generate, status, users, videos
+from routers import billing, generate, status, users, videos
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("phantom.api")
@@ -47,6 +47,7 @@ app.include_router(generate.router)
 app.include_router(status.router)
 app.include_router(videos.router)
 app.include_router(users.router)
+app.include_router(billing.router)
 
 # Serve generated MP4s and thumbnails so the frontend can <video src=...>
 Path(settings.video_output_dir).mkdir(parents=True, exist_ok=True)
