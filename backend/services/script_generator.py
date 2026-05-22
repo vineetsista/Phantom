@@ -1072,6 +1072,32 @@ def _spoken_word_pass(client: Any, parsed: dict[str, Any]) -> dict[str, Any]:
     return parsed
 
 
+def _locate_line_in_excerpt(needle: str, excerpt_lines: list[str]) -> Optional[int]:
+    """Find a line of code in the excerpt. Returns 1-indexed line number,
+    or None. Used as a fuzzy-match fallback when Claude returns a line of
+    code but mis-attributes the line number — common when Claude has been
+    reasoning about a trimmed snippet but the validator uses the full
+    excerpt's indexing.
+
+    Strategy: try exact match first, then prefix-match on a stripped
+    version of the needle (in case Claude truncated)."""
+    needle = (needle or "").strip()
+    if len(needle) < 8:
+        return None
+    # Exact match first.
+    for i, line in enumerate(excerpt_lines, start=1):
+        if needle in line.strip():
+            return i
+    # Prefix match — Claude may have truncated.
+    if len(needle) >= 20:
+        prefix = needle[:20].strip()
+        for i, line in enumerate(excerpt_lines, start=1):
+            stripped = line.strip()
+            if stripped.startswith(prefix):
+                return i
+    return None
+
+
 def _scrub_title(title: str) -> str:
     """Strip adverbs from titles. Single-pass regex; preserves the rest."""
     cleaned = _TITLE_ADVERB.sub("", title or "")
@@ -1357,11 +1383,27 @@ def _normalize(script: dict[str, Any], analysis: AnalysisResult) -> dict[str, An
                 )
                 continue
             actual = excerpt_lines[line_no - 1].strip()
-            # NEW: blank / whitespace-only / decoration-only lines are
-            # never useful highlights. The user reported v3 videos
-            # underlining empty lines with no annotation, which looked
-            # broken. Reject anything that has nothing for the viewer
-            # to read on the active line.
+            # FUZZY-LOCATE: if Claude's claimed line_number doesn't match
+            # its claimed code text, but the code text DOES appear
+            # elsewhere in the excerpt, use the actual location. v4
+            # caught this: Claude was producing real code lines but with
+            # line numbers off by 10-50, possibly because it was
+            # reasoning about a trimmed copy of the file. Don't punish
+            # Claude for getting the code right and the index wrong.
+            if line_text and line_text not in actual and actual not in line_text:
+                relocated = _locate_line_in_excerpt(line_text, excerpt_lines)
+                if relocated is not None:
+                    logger.info(
+                        "Relocated highlight: Claude said L%d but %r is actually at L%d",
+                        line_no, line_text[:40], relocated,
+                    )
+                    line_no = relocated
+                    h["line_number"] = relocated
+                    actual = excerpt_lines[line_no - 1].strip()
+
+            # Blank / whitespace-only / decoration-only lines are never
+            # useful highlights. The user reported v3 videos underlining
+            # empty lines with no annotation, which looked broken.
             if not actual:
                 logger.info(
                     "Dropping highlight: line %d is blank in excerpt",
@@ -1375,8 +1417,7 @@ def _normalize(script: dict[str, Any], analysis: AnalysisResult) -> dict[str, An
                 )
                 continue
             # Comment-only lines are usually not the right highlight unless
-            # Claude has an annotation that makes it relevant. Allow if the
-            # annotation explains why it's interesting.
+            # Claude has an annotation that makes it relevant.
             comment_only = bool(
                 re.match(r"^\s*(//|#|\*|/\*|\*/)", actual)
             )
@@ -1390,7 +1431,7 @@ def _normalize(script: dict[str, Any], analysis: AnalysisResult) -> dict[str, An
                 # No text supplied — accept and fill from the excerpt.
                 h["code"] = actual
             elif line_text not in actual and actual not in line_text:
-                # Hard mismatch — Claude invented the line text. Drop.
+                # Hard mismatch even after relocation attempt. Drop.
                 logger.warning(
                     "Dropping highlight: line %d text mismatch. "
                     "Claude=%r excerpt=%r",
