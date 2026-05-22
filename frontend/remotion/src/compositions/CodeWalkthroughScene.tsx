@@ -10,7 +10,6 @@ import {
 import { BackgroundGrid } from "../components/BackgroundGrid";
 import { CameraMove } from "../components/CameraMove";
 import { FocusGlow } from "../components/FocusGlow";
-import { Particles } from "../components/Particles";
 import { Watermark } from "../components/Watermark";
 import { FONT_BODY, FONT_DISPLAY, FONT_MONO } from "../loadFonts";
 import { COLORS, FPS, type ScriptSection } from "../types";
@@ -242,6 +241,9 @@ export const CodeWalkthroughScene: React.FC<{ section: ScriptSection }> = ({
   const punchlineActive = activeRangeIndex === punchlineIndex && punchlineRange != null;
 
   // For the punchline line specifically, compute how many chars are revealed.
+  // ~70ms per char (2.1 frames at 30fps) — slow enough to read along, fast
+  // enough to fit inside a typical highlight window. Previous fixed-60-frame
+  // window typed long lines too fast and short lines unhelpfully slow.
   const punchlineCharsRevealed = punchlineRange
     ? Math.max(
         0,
@@ -250,7 +252,11 @@ export const CodeWalkthroughScene: React.FC<{ section: ScriptSection }> = ({
           Math.round(
             interpolate(
               frame,
-              [punchlineRange.startFrame, punchlineRange.startFrame + 60],
+              [
+                punchlineRange.startFrame,
+                punchlineRange.startFrame +
+                  Math.max(45, (punchlineRange.highlight.code || "").length * 2.1),
+              ],
               [0, (punchlineRange.highlight.code || "").length],
               { extrapolateLeft: "clamp", extrapolateRight: "clamp" },
             ),
@@ -277,7 +283,6 @@ export const CodeWalkthroughScene: React.FC<{ section: ScriptSection }> = ({
   return (
     <AbsoluteFill>
       <BackgroundGrid />
-      <Particles count={18} seed={(data.path ?? "x").length * 13 + 11} speed={0.5} />
       <FocusGlow x={50} y={60} radius={62} intensity={0.06} />
 
       <CameraMove pan="right" intensity={0.35}>
