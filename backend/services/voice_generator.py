@@ -838,26 +838,119 @@ def sync_visuals_to_alignment(
 
         elif sid == "code_walkthrough":
             highlights = data.get("highlights") or []
-            anchored = 0
-            for h in highlights:
+            anchored: dict[int, float] = {}  # index -> timestamp
+            taken_h: set[float] = set()
+
+            for i, h in enumerate(highlights):
                 code = (h.get("code") or "").strip()
-                annotation = h.get("annotation") or ""
-                # The code line itself is usually distinctive enough to find
-                # in the audio. Fall back to the annotation if not.
-                t = None
+                annotation = (h.get("annotation") or "").strip()
+
+                # Build a ranked list of search phrases. The narrator
+                # rarely quotes the code verbatim — they paraphrase. So
+                # we try the most distinctive IDENTIFIERS in the code
+                # line first, then the annotation, then last-resort
+                # phrases. Each candidate is scored against the alignment
+                # text.
+                phrases: list[str] = []
+                # Distinctive identifiers from the code line (camelCase,
+                # snake_case, longer than 4 chars, not pure keywords).
+                for m in re.finditer(r"\b([A-Za-z_][A-Za-z0-9_]{3,})\b", code):
+                    ident = m.group(1)
+                    if ident.lower() in {
+                        "const", "function", "return", "import", "export",
+                        "class", "true", "false", "null", "undefined",
+                        "from", "type", "interface", "this", "throws",
+                    }:
+                        continue
+                    # camelCase-split form catches narrator pronouncing
+                    # "publishFailure" as "publish Failure".
+                    spaced = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", ident)
+                    phrases.append(ident)
+                    if spaced != ident:
+                        phrases.append(spaced)
+
+                # Annotation as a phrase (more distinctive than the first word)
+                if annotation:
+                    annotation_words = annotation.split()
+                    if len(annotation_words) >= 3:
+                        phrases.append(" ".join(annotation_words[:3]))
+                    phrases.append(annotation_words[0] if annotation_words else "")
+
+                # First 3-4 code tokens as legacy fallback
                 if len(code) >= 8:
-                    # Use the first 3-5 tokens as a search anchor — the whole
-                    # line is unlikely to be quoted verbatim in narration.
-                    snippet = " ".join(code.split()[:4])
-                    t = find_phrase_time(alignment, snippet)
-                if t is None and annotation:
-                    t = find_phrase_time(alignment, annotation.split()[0] if annotation else "")
+                    phrases.append(" ".join(code.split()[:4]))
+                    phrases.append(" ".join(code.split()[:3]))
+
+                # Dedup preserving order
+                seen: set[str] = set()
+                phrases = [p for p in phrases if p and p not in seen and not seen.add(p)]
+
+                t: float | None = None
+                for phrase in phrases:
+                    if len(phrase.strip()) < 4:
+                        continue
+                    cand = find_phrase_time(alignment, phrase)
+                    if cand is None:
+                        continue
+                    # Reject candidates within 0.5s of an already-taken
+                    # timestamp (likely a wrong match).
+                    if any(abs(cand - tk) < 0.5 for tk in taken_h):
+                        continue
+                    # Reject candidates that would break linear ordering.
+                    prior_max = max(taken_h) if taken_h else -10.0
+                    if cand < prior_max - 1.5:
+                        continue
+                    t = cand
+                    break
+
                 if t is not None:
                     h["narration_start_seconds"] = round(t, 2)
-                    anchored += 1
+                    anchored[i] = t
+                    taken_h.add(round(t, 2))
+
+            # Fallback for unanchored highlights: distribute proportionally
+            # between surrounding anchored ones. Same algorithm as the
+            # architecture scene above.
+            audio_dur_c = 0.0
+            for a in audio_files:
+                if a.get("section_id") == sid:
+                    audio_dur_c = float(a.get("audio_duration_seconds") or 0.0)
+                    break
+            anchored_idx_c = sorted(anchored.keys())
+            for i, h in enumerate(highlights):
+                if i in anchored:
+                    continue
+                left = max((j for j in anchored_idx_c if j < i), default=None)
+                right = min((j for j in anchored_idx_c if j > i), default=None)
+                if left is None and right is None:
+                    if audio_dur_c > 0 and highlights:
+                        slot = (audio_dur_c - 1.0) / max(1, len(highlights))
+                        interp = 0.5 + i * slot
+                    else:
+                        interp = float(h.get("narration_start_seconds") or i * 5.0)
+                elif left is None:
+                    right_t = float(highlights[right]["narration_start_seconds"])
+                    interp = right_t * (i + 1) / max(1, right + 2)
+                elif right is None:
+                    left_t = float(highlights[left]["narration_start_seconds"])
+                    end_t = audio_dur_c or (left_t + (len(highlights) - left) * 5.0)
+                    fraction = (i - left) / max(1, len(highlights) - left)
+                    interp = left_t + (end_t - left_t) * fraction
+                else:
+                    left_t = float(highlights[left]["narration_start_seconds"])
+                    right_t = float(highlights[right]["narration_start_seconds"])
+                    fraction = (i - left) / max(1, right - left)
+                    interp = left_t + (right_t - left_t) * fraction
+                interp = round(max(0.0, interp), 2)
+                logger.info(
+                    "Code-walkthrough fallback: highlight %d narration_start %s -> %.2fs",
+                    i, h.get("narration_start_seconds"), interp,
+                )
+                h["narration_start_seconds"] = interp
+
             logger.info(
                 "Sync code_walkthrough: %d/%d highlights anchored to alignment data",
-                anchored, len(highlights),
+                len(anchored), len(highlights),
             )
 
         elif sid == "summary":

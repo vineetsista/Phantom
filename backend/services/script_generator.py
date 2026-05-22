@@ -264,6 +264,33 @@ dependencies or the user-visible boundary. Not a flat list of modules.
 
 CODE WALKTHROUGH SECTION — TEACH LIKE A HUMAN AT A WHITEBOARD:
 
+CRITICAL DISCIPLINE: pick the highlighted lines FIRST, then write the
+narration around them. The previous approach — writing narration
+freehand and then trying to back-fill highlights from whatever's in the
+code excerpt — produced videos where the narrator described "the parse
+method" while the screen showed `export type ZodRawShape = ...`. That
+desync is a hard fail.
+
+The new process:
+  1. Read the code excerpt. Identify 3-5 line numbers that capture the
+     essential mechanism of this file. Prefer function/method
+     declarations, the return statement that does the real work, a key
+     conditional, an interesting type signature, or an obvious
+     "punchline" line a senior engineer would point at.
+  2. For each chosen line, write a one-sentence narration beat about
+     EXACTLY THAT LINE'S CONTENT. Mention by name what's on that line —
+     the function name, the operator, the literal — so the viewer
+     hears it as they see the underline activate.
+  3. Stitch those beats together with light connective tissue. The
+     finished narration should still flow as one continuous thought.
+
+When you finish, every concept named in the narration MUST exist in the
+visible code excerpt. If you find yourself wanting to talk about a
+"parse method" or a "Layer class" that isn't shown, either pick a
+different file via the input's `top_files`, or pick different lines
+within the current file that ARE shown. NEVER describe code the viewer
+can't see.
+
 The code panel auto-scrolls as you point at lines. You give one line
 the punchline treatment — exactly ONE per scene — by marking it
 `punchline: true`; that line types itself in character-by-character
@@ -610,6 +637,18 @@ def _generate_with_claude(analysis: AnalysisResult, api_key: str) -> dict[str, A
     # for the most common offenders.
     _scrub_hook_inline(parsed)
 
+    # Code walkthrough cohesion check. If the narration discusses concepts
+    # (function/identifier names) that don't appear in any highlight's
+    # `code` text, the visual will desync from the audio (viewer hears
+    # "parse method" while screen shows `ZodRawShape`). Detected by
+    # extracting candidate identifiers from the narration and looking for
+    # at least 2 of them in the highlights' code text. If too few match,
+    # ask Claude for a single rewrite pass focused on this section.
+    try:
+        _enforce_code_narration_cohesion(client, parsed, analysis)
+    except Exception as exc:
+        logger.warning("Code-narration cohesion pass failed: %s", exc)
+
     # Up to 3 stop-slop / revision passes. Each pass is only invoked when
     # heuristics actually fire, so the typical job pays for at most one
     # extra model call. A pass that doesn't reduce the slop count gets
@@ -668,6 +707,145 @@ def _generate_with_claude(analysis: AnalysisResult, api_key: str) -> dict[str, A
         logger.warning("Spoken-word pass failed, shipping pre-pass script: %s", exc)
 
     return _normalize(parsed, analysis)
+
+
+def _extract_identifiers(text: str) -> set[str]:
+    """Pull camelCase / PascalCase / snake_case identifiers from text.
+    Used to compare narration vocabulary against the code being shown."""
+    if not text:
+        return set()
+    tokens: set[str] = set()
+    # camelCase / PascalCase / lowercase identifiers, length >= 4
+    for m in re.finditer(r"\b[A-Za-z][A-Za-z0-9_]{3,}\b", text):
+        word = m.group(0)
+        # Skip common English words — they're not load-bearing for
+        # cohesion. Conservative list; we'd rather false-positive than
+        # miss a real mismatch.
+        if word.lower() in {
+            "this", "that", "with", "from", "into", "when", "then", "what",
+            "where", "which", "while", "they", "them", "their", "there",
+            "have", "been", "will", "your", "yours", "ours", "each", "some",
+            "code", "line", "file", "files", "type", "types", "method",
+            "methods", "function", "functions", "return", "returns", "value",
+            "values", "data", "object", "objects", "string", "strings",
+            "number", "numbers", "array", "arrays", "input", "output",
+            "step", "steps", "case", "cases", "logic", "system", "rules",
+            "errors", "error", "result", "results", "first", "second",
+            "third", "every", "another", "running", "based", "stays",
+            "really", "happens", "above", "below", "after", "before",
+            "those", "these", "without", "instead", "between", "through",
+            "using", "uses", "look", "looks", "thing", "things",
+        }:
+            continue
+        tokens.add(word)
+    return tokens
+
+
+def _enforce_code_narration_cohesion(
+    client: Any, parsed: dict[str, Any], analysis: AnalysisResult
+) -> None:
+    """If the code_walkthrough narration mentions identifiers that don't
+    appear in any highlight's code text, ask Claude for a one-shot rewrite
+    of just the narration + highlights so they cohere.
+
+    Heuristic: the narration should share at least 2 distinctive
+    identifiers with the highlights' combined code text. Less than 2 →
+    they're describing different things."""
+    code_section = next(
+        (s for s in parsed.get("sections", []) if s.get("id") == "code_walkthrough"),
+        None,
+    )
+    if not code_section:
+        return
+    narration = code_section.get("narration") or ""
+    visuals = (code_section.get("visuals") or {}).get("data") or {}
+    highlights = visuals.get("highlights") or []
+    if not highlights:
+        return
+
+    narration_idents = _extract_identifiers(narration)
+    highlight_text = " ".join(
+        (h.get("code") or "") + " " + (h.get("annotation") or "")
+        for h in highlights
+    )
+    highlight_idents = _extract_identifiers(highlight_text)
+
+    overlap = narration_idents & highlight_idents
+    if len(overlap) >= 2:
+        return  # cohesive enough
+
+    logger.info(
+        "Code-narration cohesion fail: %d shared identifiers (need ≥2). "
+        "narration=%s vs highlights=%s. Triggering rewrite.",
+        len(overlap),
+        sorted(list(narration_idents))[:8],
+        sorted(list(highlight_idents))[:8],
+    )
+
+    # Provide the FULL excerpt + current highlights, ask Claude to either
+    # rewrite the narration to match the highlights OR repick highlights
+    # to match the narration. Whichever yields better cohesion.
+    excerpt = analysis.code_excerpt or {}
+    code_text = excerpt.get("code") or ""
+    system = (
+        "The code walkthrough section's narration is describing concepts "
+        "(identifiers, function names) that do NOT appear in any of the "
+        "highlighted lines. The viewer will hear about one thing while "
+        "the screen shows another. Fix this. Rewrite the section so that "
+        "EVERY identifier and function name mentioned in the narration "
+        "appears verbatim in at least one highlighted line's `code` text "
+        "OR in its `annotation`. Pick the actual lines that contain what "
+        "the narration discusses; if the lines you want aren't in the "
+        "excerpt, pick DIFFERENT concepts that ARE shown. "
+        "Return JSON of the form: "
+        '{"narration": "...", "highlights": [{"line_number": int, '
+        '"code": "exact line text", "narration_start_seconds": float, '
+        '"emphasis": bool, "punchline": bool, "annotation": "6-10 words"}, '
+        "...]}. EXACTLY ONE highlight has punchline=true. 3-5 highlights total."
+    )
+    msg = client.messages.create(
+        model="claude-sonnet-4-5",
+        max_tokens=2048,
+        system=system,
+        messages=[{
+            "role": "user",
+            "content": (
+                "Current narration:\n" + narration + "\n\n"
+                "Current highlights (these had no overlap with the narration):\n"
+                + json.dumps(highlights, indent=2) + "\n\n"
+                "Full code excerpt (you can pick any line 1.."
+                + str(len(code_text.splitlines())) + "):\n```\n"
+                + code_text + "\n```"
+            ),
+        }],
+    )
+    out = _extract_json(msg)
+    new_narr = out.get("narration") or ""
+    new_highlights = out.get("highlights") or []
+    if not new_narr.strip() or not new_highlights:
+        logger.warning("Cohesion rewrite returned malformed payload, keeping original")
+        return
+
+    # Validate the new highlights have ≥2 shared identifiers with the new
+    # narration before accepting.
+    new_h_text = " ".join(
+        (h.get("code") or "") + " " + (h.get("annotation") or "")
+        for h in new_highlights
+    )
+    new_overlap = _extract_identifiers(new_narr) & _extract_identifiers(new_h_text)
+    if len(new_overlap) < 2:
+        logger.warning(
+            "Cohesion rewrite still has only %d shared idents; keeping original",
+            len(new_overlap),
+        )
+        return
+
+    code_section["narration"] = new_narr.strip()
+    visuals["highlights"] = new_highlights
+    logger.info(
+        "Cohesion rewrite accepted: %d shared identifiers now (%s)",
+        len(new_overlap), sorted(list(new_overlap))[:5],
+    )
 
 
 def _enforce_specific_takeaways(

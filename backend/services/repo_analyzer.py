@@ -1085,8 +1085,15 @@ def _description_for(name: str, file_count: int) -> str:
     return role
 
 
-EXCERPT_MAX_LINES = 80
-EXCERPT_MAX_BYTES = 8_000
+# Widened from 80 → 240 after the v3 sync audit. Claude was writing
+# narration about concepts (ZodType base class, parse method) that lived
+# beyond the visible 80-line window, then picking arbitrary lines INSIDE
+# the window as "highlights" — producing the catastrophic
+# code-doesn't-match-narration bug the user reported. 240 lines covers
+# the typical "class with its core methods" pattern that anchors a
+# walkthrough.
+EXCERPT_MAX_LINES = 240
+EXCERPT_MAX_BYTES = 24_000
 EXCERPT_MAX_LINE_LENGTH = 80  # cap individual lines so they fit the code panel
 
 
