@@ -28,6 +28,9 @@ next-env.d.ts.bak
 # --- pipeline output ---
 output/
 !output/.gitkeep
+# Per-job audio assets that the worker copies into publicDir for Remotion.
+# These accumulate quickly and shouldn't be source-controlled.
+frontend/public/jobs/
 
 # --- editor ---
 .vscode/

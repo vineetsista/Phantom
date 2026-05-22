@@ -69,6 +69,12 @@ _JARGON: dict[str, str] = {
     "npm": "N P M",
     "URL": "U R L",
     "URLs": "U R Ls",
+    "url": "U R L",
+    "urls": "U R Ls",
+    "API": "A P I",
+    "APIs": "A P I's",
+    "api": "A P I",
+    "apis": "A P I's",
     "SQL": "sequel",       # industry convention
     "JSON": "Jason",
     "YAML": "yamel",
@@ -83,6 +89,7 @@ _JARGON: dict[str, str] = {
     "REST": "REST",        # already pronounced as a word
     "GraphQL": "graph Q L",
     "JWT": "J W T",
+    "JWTs": "J W T's",
     "CLI": "C L I",
     "TLS": "T L S",
     "SSL": "S S L",
@@ -93,15 +100,50 @@ _JARGON: dict[str, str] = {
     "HTML": "H T M L",
     "HTTP": "H T T P",     # otherwise read as "h-t-t-p" with awkward break
     "HTTPS": "H T T P S",  # user reported pause mid-word; force consistent spell
+    # When Claude writes file extensions in narration (".ts", ".js") the
+    # preprocessor still turns them into " dot T S" etc. for the TTS, which
+    # sounds like a person reading a path. The narration prompt now
+    # forbids those — but if they slip in, the audio is at least
+    # consistent.
     "TS": "T S",
     "JS": "J S",
+    "TSX": "T S X",
+    "JSX": "J S X",
+    "TypeScript": "TypeScript",  # explicit so dictionary lookups don't truncate
+    "ESM": "E S M",
+    "CommonJS": "common J S",
+    "CJS": "C J S",
     "Postgres": "Postgress",  # otherwise reads as "Post-grease"
+    "PostgreSQL": "Postgress",
     "Redis": "Red-iss",
     "nginx": "engine X",
     "regex": "reg-ex",
     "AI": "A I",
     "LLM": "L L M",
+    "LLMs": "L L M's",
     "GPT": "G P T",
+    "IDE": "I D E",
+    "IDEs": "I D E's",
+    "MVP": "M V P",
+    "MVPs": "M V P's",
+    "PR": "P R",
+    "PRs": "P R's",
+    "SDK": "S D K",
+    "SDKs": "S D K's",
+    "CRUD": "CRUD",  # pronounced as word
+    "RPC": "R P C",
+    "gRPC": "G R P C",
+    "MIT": "M I T",
+    "TCP": "T C P",
+    "UDP": "U D P",
+    "ID": "I D",
+    "UUID": "U U I D",
+    "UUIDs": "U U I D's",
+    "vs.": "versus",
+    "vs": "versus",
+    "e.g.": "for example",
+    "i.e.": "that is",
+    "WIP": "W I P",
     # HTTP verbs — Brian spells them with weird mid-letter pauses
     # ("GE...T", "PO...ST"). Forcing explicit letter spacing makes the
     # cadence consistent.

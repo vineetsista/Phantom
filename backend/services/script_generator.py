@@ -232,8 +232,10 @@ For the architecture section, the JSON `visuals.data` must look like:
   {
     "modules": [
       { "id": "entry", "label": "index.js", "file_path": "index.js",
+        "description": "Builder API entry — exports z.string, z.number, z.object that each return a schema instance.",
         "narration_start_seconds": 0.0 },
       { "id": "p-any", "label": "p-any", "file_path": "node_modules/p-any",
+        "description": "Promise.any-style race that resolves on first success and only rejects when all checks fail.",
         "narration_start_seconds": 6.2 },
       ...
     ],
@@ -245,6 +247,12 @@ For the architecture section, the JSON `visuals.data` must look like:
       { "path": ["entry", "router", "handler"], "narration_seconds": 14.0 }
     ]
   }
+
+The `description` field is REQUIRED and should be 12-22 words. It's
+displayed as a callout next to the module while the narrator is on
+that module's beat. Write it as a concrete observation, not a generic
+"this is the X module." Match the narration's framing — if the
+narration calls something "the race", say "race" in the description.
 
 Rules for this data:
 - `narration_start_seconds` is the time, in seconds from the start of

@@ -17,6 +17,14 @@ export interface ScriptModule {
   narration_start_seconds?: number;
 }
 
+/** Augmented module shape for the slide-cycling architecture scene. */
+export interface ScriptArchModule extends ScriptModule {
+  /** 12-22 word callout displayed beside the module while the narrator
+   * is on this beat. Surfaces the *why* the previous flat-list view
+   * couldn't communicate. */
+  description?: string;
+}
+
 export interface ScriptConnection {
   from: string;
   to: string;
