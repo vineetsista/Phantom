@@ -7,6 +7,12 @@ services:
       dockerfile: Dockerfile
     ports:
       - "3000:3000"
+    # v8: frontend now reads .env too. Required for NEXTAUTH_URL,
+    # NEXTAUTH_SECRET, and GITHUB_CLIENT_ID/SECRET to reach the Next
+    # server process. Without this the [next-auth][warn][NO_SECRET]
+    # warnings show up and the OAuth dance can't sign JWTs.
+    env_file:
+      - .env
     environment:
       # NEXT_PUBLIC_* is baked into the browser bundle; localhost works there.
       - NEXT_PUBLIC_API_URL=http://localhost:8000
