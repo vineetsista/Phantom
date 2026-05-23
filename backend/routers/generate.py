@@ -1,13 +1,15 @@
 import os
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from models import User, Video, VideoStatus, get_db
 from routers.users import check_quota, increment_usage, optional_user
 from utils.github_client import parse_github_url
+from utils.rate_limit import check_rate_limit
+from utils.url_validator import validate_repo_url
 from workers.tasks import generate_video
 
 router = APIRouter(prefix="/api/v1", tags=["generate"])
@@ -40,11 +42,39 @@ class GenerateResponse(BaseModel):
 @router.post("/generate", response_model=GenerateResponse, status_code=status.HTTP_202_ACCEPTED)
 def create_generation(
     body: GenerateRequest,
+    request: Request,
     db: Session = Depends(get_db),
     user: Optional[User] = Depends(optional_user),
 ) -> GenerateResponse:
+    # v7 — URL whitelist + length check before doing anything else. Stops
+    # the wallet-draining "paste localhost / file:// / random URL" attack
+    # at the door.
     try:
-        owner, name = parse_github_url(body.repo_url)
+        normalized_url = validate_repo_url(body.repo_url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    # v7 — rate limit. Per-IP for anonymous, per-user when authenticated.
+    # Generate is expensive (~$0.18/render) so we cap aggressively. Both
+    # limits enforced — a logged-in user from one IP still gets capped.
+    client_ip = (
+        request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+        or (request.client.host if request.client else "unknown")
+    )
+    check_rate_limit(
+        key=f"generate:ip:{client_ip}",
+        limit=10 if user is None else 30,
+        window_seconds=3600,
+    )
+    if user is not None:
+        check_rate_limit(
+            key=f"generate:user:{user.id}",
+            limit=100,  # never more than 100/hr per user, regardless of plan
+            window_seconds=3600,
+        )
+
+    try:
+        owner, name = parse_github_url(normalized_url)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -69,7 +99,7 @@ def create_generation(
         visibility = body.options.visibility or "public"
 
     video = Video(
-        repo_url=body.repo_url,
+        repo_url=normalized_url,
         repo_owner=owner,
         repo_name=name,
         status=VideoStatus.queued,
@@ -89,6 +119,6 @@ def create_generation(
     if REQUIRE_AUTH and user is not None:
         increment_usage(user, db)
 
-    generate_video.delay(video.id, body.repo_url, body.options.model_dump())
+    generate_video.delay(video.id, normalized_url, body.options.model_dump())
 
     return GenerateResponse(job_id=video.id, status=video.status.value)
