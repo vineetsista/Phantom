@@ -6,6 +6,35 @@ import { PosterImage } from "@/components/showcase/PosterImage";
 import { SHOWCASE_REPOS } from "@/lib/showcase";
 
 const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || "https://phantom.video";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+interface LiveVideo {
+  id: string;
+  repo_owner: string;
+  repo_name: string;
+  repo_description?: string;
+  repo_language?: string;
+  repo_stars?: number;
+  thumbnail_url?: string;
+  duration_seconds?: number;
+}
+
+async function fetchLiveShowcase(): Promise<LiveVideo[]> {
+  // Live videos surface alongside the curated set. We pull the trending
+  // feed (24h) so the showcase reflects what people are actually
+  // watching right now; it falls back to all-time top inside the
+  // backend if Redis is empty.
+  try {
+    const res = await fetch(`${API_URL}/api/v1/trending?limit=18`, {
+      next: { revalidate: 600 },
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.videos as LiveVideo[]) || [];
+  } catch {
+    return [];
+  }
+}
 
 export const metadata: Metadata = {
   title: "Showcase — codebase explainers for the projects you already use",
@@ -20,7 +49,8 @@ export const metadata: Metadata = {
   },
 };
 
-export default function ShowcasePage() {
+export default async function ShowcasePage() {
+  const liveVideos = await fetchLiveShowcase();
   return (
     <>
       <JsonLd
@@ -89,6 +119,47 @@ export default function ShowcasePage() {
             </Link>
           ))}
         </div>
+
+        {liveVideos.length > 0 && (
+          <section className="mt-32">
+            <header className="flex items-end justify-between">
+              <div>
+                <div className="kicker">From the community</div>
+                <h2 className="mt-3 font-display text-3xl font-bold text-bone">
+                  Trending now.
+                </h2>
+              </div>
+              <Link href="/trending" className="text-sm text-fog hover:text-bone">
+                View all →
+              </Link>
+            </header>
+            <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {liveVideos.map((v) => (
+                <Link
+                  key={v.id}
+                  href={`/v/${v.id}`}
+                  className="group block rounded-xl border border-white/10 bg-graphite/60 p-5 transition hover:border-electric/40"
+                >
+                  <div className="font-mono text-xs text-mist">
+                    {v.repo_owner}/
+                  </div>
+                  <div className="mt-1 font-display text-lg font-bold text-bone">
+                    {v.repo_name}
+                  </div>
+                  {v.repo_description && (
+                    <p className="mt-2 line-clamp-2 text-sm text-fog">
+                      {v.repo_description}
+                    </p>
+                  )}
+                  <div className="mt-4 flex items-center justify-between text-xs text-mist">
+                    <span>{v.repo_language || "—"}</span>
+                    {v.repo_stars ? <span>★ {v.repo_stars.toLocaleString()}</span> : null}
+                  </div>
+                </Link>
+              ))}
+            </div>
+          </section>
+        )}
       </section>
     </>
   );
