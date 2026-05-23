@@ -1773,11 +1773,36 @@ def _build_focus_block(kind: str, meta: dict[str, Any]) -> str:
         )
     if kind == "pr":
         pr_n = meta.get("pr_number")
+        pr_data = meta.get("pr") or {}
+        if not pr_data:
+            return (
+                f"FOCUS: The user submitted PR #{pr_n}. The script should "
+                "narrate the PR like a code-review walkthrough: open with the "
+                "motivation, walk through the most significant hunks, close "
+                "with what merging this unlocks."
+            )
+        files_table = "\n".join(
+            f"  - {f.get('filename')}: +{f.get('additions',0)}/-{f.get('deletions',0)} ({f.get('status')})"
+            for f in (pr_data.get("files") or [])[:12]
+        )
+        diff_block = pr_data.get("diff") or ""
+        if pr_data.get("diff_truncated"):
+            diff_block += "\n\n[diff truncated for length]"
         return (
-            f"FOCUS: The user submitted PR #{pr_n}. The script should "
-            "narrate the PR like a code-review walkthrough: open with the "
-            "motivation, walk through the most significant hunks, close "
-            "with what merging this unlocks."
+            f"FOCUS: PR #{pr_n} — \"{pr_data.get('title', '')}\"\n"
+            f"Author: {pr_data.get('author','')}  "
+            f"Status: {'merged' if pr_data.get('merged') else pr_data.get('state','open')}  "
+            f"Files: {pr_data.get('changed_files',0)}  "
+            f"Lines: +{pr_data.get('additions',0)}/-{pr_data.get('deletions',0)}\n\n"
+            f"PR description (verbatim):\n{pr_data.get('body','')[:1200]}\n\n"
+            f"Changed files:\n{files_table}\n\n"
+            f"Unified diff (most important hunks):\n```diff\n{diff_block[:55000]}\n```\n\n"
+            "Narrate this PR like a code review: open with the problem and "
+            "the motivation from the description; the middle three scenes "
+            "walk through the most important hunks (use highlight.code with "
+            "real diff context); close with what merging this unlocks. "
+            "Refer to the PR author by name once. Do not pretend the PR "
+            "is the entire repo."
         )
     if kind == "compare":
         b = meta.get("compared_repo_url", "")

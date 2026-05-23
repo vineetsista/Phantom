@@ -10,6 +10,7 @@ from models import SessionLocal, Video, VideoStatus
 from services import (
     diagram_generator,
     frame_extractor,
+    pr_analyzer,
     repo_analyzer,
     script_generator,
     summary_generator,
@@ -98,6 +99,32 @@ def generate_video(self, job_id: str, repo_url: str, options: dict[str, Any]) ->
         )
         intake_kind = options.get("intake_kind") or "repo"
         intake_meta = options.get("intake_meta") or {}
+
+        # PR mode — fetch the actual PR diff before generating the script.
+        # Best-effort: if GitHub rate-limits or the PR is private, we fall
+        # back to plain repo narration (intake_kind stays 'pr' so the
+        # focus block still points the narration at "this PR" — Claude
+        # just has less specifics to lean on).
+        if intake_kind == "pr" and intake_meta.get("pr_number"):
+            try:
+                pr_summary = pr_analyzer.fetch_pr(
+                    analysis.repo.get("owner", ""),
+                    analysis.repo.get("name", ""),
+                    int(intake_meta["pr_number"]),
+                )
+                if pr_summary is not None:
+                    intake_meta = {**intake_meta, "pr": pr_summary.to_dict()}
+                    logger.info(
+                        "job=%s fetched PR #%d (+%d/-%d, %d files)",
+                        job_id,
+                        pr_summary.number,
+                        pr_summary.additions,
+                        pr_summary.deletions,
+                        pr_summary.changed_files,
+                    )
+            except Exception as exc:
+                logger.warning("PR fetch raised, continuing without: %s", exc)
+
         script = script_generator.generate(
             analysis, intake_kind=intake_kind, intake_meta=intake_meta
         )
