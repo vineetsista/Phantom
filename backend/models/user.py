@@ -85,6 +85,12 @@ class User(Base):
     email_on_complete: Mapped[bool] = mapped_column(Boolean, default=True)
     email_on_milestone: Mapped[bool] = mapped_column(Boolean, default=True)
 
+    # v7 — webhook config (Pro+). Webhook fires on generation events.
+    # signing_secret is generated once on first config and shown to the
+    # user so they can verify signatures.
+    webhook_url: Mapped[str] = mapped_column(Text, default="")
+    webhook_secret: Mapped[str] = mapped_column(String(64), default="")
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     def to_dict(self) -> dict:

@@ -70,20 +70,45 @@ def upsert_user(body: UpsertUserBody, db: Session = Depends(get_db)) -> dict:
     return user.to_dict()
 
 
+def _user_from_api_key(authorization: str, db: Session) -> Optional[User]:
+    """If `authorization` is a Bearer phk_live_... token, look it up and
+    return the owning user. Updates last_used_at on each hit. None on
+    miss / revoked / malformed."""
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
+    token = authorization[len("Bearer "):].strip()
+    if not token.startswith("phk_"):
+        return None
+    from datetime import datetime
+
+    from models import ApiKey, hash_key
+    digest = hash_key(token)
+    key = db.query(ApiKey).filter(ApiKey.key_hash == digest).one_or_none()
+    if key is None or key.revoked_at is not None:
+        return None
+    key.last_used_at = datetime.utcnow()
+    db.commit()
+    user = db.query(User).filter(User.id == key.user_id).one_or_none()
+    return user
+
+
 def require_user(
     x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
+    authorization: Optional[str] = Header(default=None, alias="Authorization"),
     db: Session = Depends(get_db),
 ) -> User:
-    """FastAPI dependency: load the current user from the X-User-Id header.
+    """FastAPI dependency: load the current user from EITHER the
+    X-User-Id session header (set by the Next.js proxy after NextAuth
+    session validation) OR an `Authorization: Bearer phk_...` API key
+    header (Pro+ programmatic access).
 
-    Returns the User row; raises 401 if header missing or 404 if user
-    doesn't exist in the DB. Use as `user: User = Depends(require_user)`
-    on protected endpoints.
-
-    The header is set by the Next.js proxy after session validation. In
-    development (where the frontend may not be configured), the backend
-    can be hit directly with a manual X-User-Id header to test.
+    Bearer auth checked first so API keys take precedence over a
+    cookie session — matches Stripe / GitHub conventions.
     """
+    user = _user_from_api_key(authorization or "", db)
+    if user is not None:
+        return user
+
     if not x_user_id:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -100,11 +125,15 @@ def require_user(
 
 def optional_user(
     x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
+    authorization: Optional[str] = Header(default=None, alias="Authorization"),
     db: Session = Depends(get_db),
 ) -> Optional[User]:
     """Same as require_user but returns None instead of raising — used
-    for endpoints that work both authenticated and not (e.g. read-only
-    video pages)."""
+    for endpoints that work both authenticated and not. Honours API
+    keys + session header in the same order as require_user."""
+    user = _user_from_api_key(authorization or "", db)
+    if user is not None:
+        return user
     if not x_user_id:
         return None
     return db.query(User).filter(User.id == x_user_id).one_or_none()

@@ -236,6 +236,32 @@ def generate_video(self, job_id: str, repo_url: str, options: dict[str, Any]) ->
         except Exception as exc:
             logger.warning("Frame extraction failed (non-fatal): %s", exc)
 
+        # v7 — fire user webhook if configured. Best-effort, never blocks.
+        try:
+            from services import webhook_dispatcher
+            with SessionLocal() as wdb:
+                v = wdb.get(Video, job_id)
+                if v and v.user_id:
+                    from models import User
+                    u = wdb.query(User).filter(User.id == v.user_id).one_or_none()
+                    if u and u.webhook_url:
+                        webhook_dispatcher.dispatch(
+                            u.webhook_url, u.webhook_secret or "",
+                            "generation.completed",
+                            {
+                                "video_id": v.id,
+                                "repo_url": v.repo_url,
+                                "video_url": v.video_url,
+                                "summary_url": (
+                                    f"/video/{v.id}/summary" if v.summary_data else None
+                                ),
+                                "duration_seconds": v.duration_seconds,
+                                "generated_at": v.completed_at.isoformat() if v.completed_at else None,
+                            },
+                        )
+        except Exception as exc:
+            logger.warning("Webhook dispatch failed (non-fatal): %s", exc)
+
         return {"video_url": output["video_path"], "duration": output["duration_seconds"]}
     except Exception as exc:
         logger.exception("Generation failed for job %s", job_id)

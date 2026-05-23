@@ -17,7 +17,7 @@ class Base(DeclarativeBase):
 
 def init_db() -> None:
     # Import models so their tables register on Base.metadata before create_all.
-    from . import user, video  # noqa: F401
+    from . import api_key, user, video  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
 
