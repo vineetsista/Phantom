@@ -7,6 +7,43 @@ import { VideoPlayer } from "@/components/video/VideoPlayer";
 import { SHOWCASE_REPOS, findShowcase, type ShowcaseRepo } from "@/lib/showcase";
 
 const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || "https://phantom.video";
+const API_URL =
+  process.env.API_PROXY_TARGET ||
+  process.env.NEXT_PUBLIC_API_URL ||
+  "http://localhost:8000";
+
+interface LiveVideo {
+  id: string;
+  video_url: string;
+  thumbnail_url: string;
+  duration_seconds: number;
+  status: string;
+}
+
+/**
+ * Look up the most recent completed video for the curated repo. We don't
+ * ship static MP4s for the curated set — they'd add hundreds of MB to
+ * the repo for content that's already in the database. Instead the
+ * detail page surfaces a real generated video when one exists, or a
+ * "generate this" CTA when one doesn't.
+ */
+async function findLiveVideo(repo: ShowcaseRepo): Promise<LiveVideo | null> {
+  const [owner, name] = repo.repo.split("/");
+  try {
+    const res = await fetch(
+      `${API_URL}/api/v1/repo/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`,
+      { next: { revalidate: 60 } },
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    const completed: LiveVideo[] = (data.videos || []).filter(
+      (v: LiveVideo) => v.status === "complete" && v.video_url,
+    );
+    return completed[0] || null;
+  } catch {
+    return null;
+  }
+}
 
 export function generateStaticParams() {
   return SHOWCASE_REPOS.map((repo) => ({ slug: repo.slug }));
@@ -48,13 +85,15 @@ export function generateMetadata({ params }: { params: { slug: string } }): Meta
   };
 }
 
-export default function ShowcaseDetail({ params }: { params: { slug: string } }) {
+export default async function ShowcaseDetail({ params }: { params: { slug: string } }) {
   const repo = findShowcase(params.slug);
   if (!repo) notFound();
 
+  const live = await findLiveVideo(repo);
+
   return (
     <>
-      <JsonLd data={buildVideoObject(repo)} />
+      <JsonLd data={buildVideoObject(repo, live)} />
       <JsonLd data={buildBreadcrumbs(repo)} />
 
       <section className="mx-auto max-w-[1280px] px-6 pb-32 pt-12">
@@ -73,10 +112,11 @@ export default function ShowcaseDetail({ params }: { params: { slug: string } })
         </header>
 
         <div className="mt-12">
-          <VideoPlayer
-            src={`/showcase/${repo.slug}.mp4`}
-            poster={`/showcase/${repo.slug}-poster.jpg`}
-          />
+          {live ? (
+            <VideoPlayer src={live.video_url} poster={live.thumbnail_url || undefined} />
+          ) : (
+            <NoVideoYet repo={repo} />
+          )}
         </div>
 
         <div className="mt-16 grid gap-6 md:grid-cols-[1fr_320px]">
@@ -127,17 +167,29 @@ export default function ShowcaseDetail({ params }: { params: { slug: string } })
 // Update when the showcase videos are re-rendered.
 const SHOWCASE_UPLOAD_DATE = "2026-05-20";
 
-function buildVideoObject(repo: ShowcaseRepo) {
+function buildVideoObject(repo: ShowcaseRepo, live: LiveVideo | null) {
+  // Prefer the real video's URL + thumbnail when one exists so the
+  // VideoObject schema doesn't list assets that 404. Falls back to the
+  // (currently non-existent) curated paths only for the schema shape.
+  const contentUrl = live
+    ? `${BASE_URL}${live.video_url}`
+    : `${BASE_URL}/showcase/${repo.slug}.mp4`;
+  const thumbnail = live && live.thumbnail_url
+    ? `${BASE_URL}${live.thumbnail_url}`
+    : `${BASE_URL}/showcase/${repo.slug}-poster.jpg`;
+  const duration = live
+    ? `PT${Math.floor(live.duration_seconds / 60)}M${live.duration_seconds % 60}S`
+    : durationLabelToISO(repo.durationLabel);
   return {
     "@context": "https://schema.org",
     "@type": "VideoObject",
     name: repo.title,
     description: repo.description,
-    thumbnailUrl: [`${BASE_URL}/showcase/${repo.slug}-poster.jpg`],
+    thumbnailUrl: [thumbnail],
     uploadDate: SHOWCASE_UPLOAD_DATE,
-    duration: durationLabelToISO(repo.durationLabel),
-    contentUrl: `${BASE_URL}/showcase/${repo.slug}.mp4`,
-    embedUrl: `${BASE_URL}/embed/${repo.slug}`,
+    duration,
+    contentUrl,
+    embedUrl: live ? `${BASE_URL}/embed/${live.id}` : `${BASE_URL}/embed/${repo.slug}`,
     publisher: {
       "@type": "Organization",
       name: "Phantom",
@@ -182,4 +234,30 @@ function durationLabelToISO(label: string): string {
   const m = isNaN(mins) ? 0 : mins;
   const s = isNaN(secs) ? 0 : secs;
   return `PT${m}M${s}S`;
+}
+
+/**
+ * Shown on a curated showcase page when nobody has generated a video
+ * for this repo yet. Pre-fills the /generate page with the repo URL so
+ * the visitor can be the first.
+ */
+function NoVideoYet({ repo }: { repo: ShowcaseRepo }) {
+  return (
+    <div className="surface-1 grid place-items-center rounded-2xl px-6 py-20 text-center">
+      <div className="kicker">No explainer yet</div>
+      <h2 className="mt-5 max-w-md font-display text-3xl font-bold leading-tight text-bone">
+        Be the first to generate this one.
+      </h2>
+      <p className="mt-4 max-w-md text-fog">
+        We&rsquo;ve sketched out what a walkthrough of {repo.repo} should
+        cover. Run the pipeline and your render lives here.
+      </p>
+      <Link
+        href={`/generate?url=${encodeURIComponent(repo.url)}`}
+        className="mt-8 inline-flex h-11 items-center rounded-full bg-electric px-6 text-sm font-semibold text-ink transition-all duration-300 hover:brightness-110"
+      >
+        Generate {repo.repo} →
+      </Link>
+    </div>
+  );
 }

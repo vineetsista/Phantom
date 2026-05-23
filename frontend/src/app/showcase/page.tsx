@@ -100,8 +100,8 @@ export default async function ShowcasePage() {
                   className="absolute inset-0 h-full w-full object-cover opacity-0 transition-opacity duration-700 ease-luxe group-hover:opacity-90"
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-ink/80 via-transparent to-transparent" />
-                <div className="absolute right-3 top-3 rounded-full bg-ink/80 px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.32em] text-fog backdrop-blur">
-                  {repo.durationLabel}
+                <div className="absolute right-3 top-3 rounded-full border border-white/10 bg-ink/80 px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.32em] text-fog backdrop-blur">
+                  Generate →
                 </div>
                 <div className="absolute left-4 bottom-4 right-4">
                   <div className="font-display text-xl font-bold text-bone">{repo.repo}</div>
