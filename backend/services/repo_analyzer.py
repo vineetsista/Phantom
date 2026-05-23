@@ -213,10 +213,26 @@ class AnalysisResult:
 
 
 def analyze(repo_url: str) -> AnalysisResult:
-    """Clone the repo into a temp dir and analyze it. Cleans up on completion."""
+    """Clone the repo into a temp dir and analyze it. Cleans up on completion.
+
+    Wraps the heavy work in a Redis cache keyed by `{owner}/{name}:{pushed_at}`.
+    Same pushed_at = same head commit on the default branch, so the cached
+    analysis is still correct. TTL 7 days. Falls through to a fresh
+    analyze when Redis is unavailable.
+    """
     settings = get_settings()
     owner, name = parse_github_url(repo_url)
     metadata = fetch_metadata(repo_url)
+
+    cache_key = None
+    if metadata.pushed_at:
+        cache_key = f"analysis:{owner}/{name}:{metadata.pushed_at}"
+        cached = _cache_get(cache_key)
+        if cached is not None:
+            try:
+                return AnalysisResult(**cached)
+            except (TypeError, ValueError) as exc:
+                logger.warning("analysis cache: bad payload, ignoring (%s)", exc)
 
     target_dir = Path(settings.repos_dir) / f"{owner}__{name}"
     if target_dir.exists():
@@ -225,19 +241,74 @@ def analyze(repo_url: str) -> AnalysisResult:
 
     try:
         _clone(metadata, target_dir)
-        return _analyze_local(target_dir, metadata)
+        result = _analyze_local(target_dir, metadata)
+        if cache_key:
+            _cache_set(cache_key, result.to_dict(), ttl_s=7 * 24 * 3600)
+        return result
     finally:
         shutil.rmtree(target_dir, ignore_errors=True)
 
 
 def _clone(metadata: RepoMetadata, target: Path) -> None:
+    # depth=200 — deep enough for ~6mo of bus-factor / activity stats on most
+    # repos, while still fast on huge ones. depth=1 was cheaper but stripped
+    # all history, making quality signals like bus_factor unusable.
     git.Repo.clone_from(
         metadata.clone_url,
         target,
-        depth=1,
+        depth=200,
         single_branch=True,
         branch=metadata.default_branch,
     )
+
+
+# --- Redis-backed analysis cache -------------------------------------------
+# Lazy + fail-open: if Redis is down, everything still works, we just don't
+# get the cache speedup. Same pattern as utils/rate_limit.py.
+
+_redis_cache_client = None
+
+
+def _get_redis_cache():
+    global _redis_cache_client
+    if _redis_cache_client is not None:
+        return _redis_cache_client
+    try:
+        import redis  # type: ignore
+        settings = get_settings()
+        _redis_cache_client = redis.from_url(settings.redis_url, decode_responses=True)
+        _redis_cache_client.ping()
+        return _redis_cache_client
+    except Exception as exc:
+        logger.warning("analysis cache: Redis unavailable, falling open: %s", exc)
+        _redis_cache_client = None
+        return None
+
+
+def _cache_get(key: str):
+    r = _get_redis_cache()
+    if r is None:
+        return None
+    try:
+        raw = r.get(key)
+        if not raw:
+            return None
+        import json
+        return json.loads(raw)
+    except Exception as exc:
+        logger.warning("analysis cache get failed: %s", exc)
+        return None
+
+
+def _cache_set(key: str, value: dict, ttl_s: int) -> None:
+    r = _get_redis_cache()
+    if r is None:
+        return
+    try:
+        import json
+        r.setex(key, ttl_s, json.dumps(value, default=str))
+    except Exception as exc:
+        logger.warning("analysis cache set failed: %s", exc)
 
 
 # --- Monorepo detection ----------------------------------------------------
@@ -1926,4 +1997,138 @@ def _extract_quality_signals(
             "explain": "CHANGELOG.md exists — release history is documented.",
         }
 
+    # --- Git-derived signals: bus factor + activity + recency -----------
+    # Best-effort. Repos cloned with --depth=1 won't have history; we
+    # detect that and skip gracefully.
+    try:
+        git_stats = _git_stats(repo_root)
+    except Exception as exc:
+        logger.warning("git_stats failed: %s", exc)
+        git_stats = None
+
+    if git_stats:
+        bus = git_stats.get("bus_factor", 0)
+        if bus > 0:
+            if bus == 1:
+                color, explain = "red", "One contributor makes most recent commits. High risk if they leave."
+            elif bus <= 3:
+                color, explain = "yellow", f"{bus} contributors share recent work."
+            else:
+                color, explain = "green", f"{bus} contributors share recent work — healthy."
+            signals["bus_factor"] = {
+                "value": str(bus),
+                "label": "Bus factor",
+                "color": color,
+                "explain": explain,
+                "raw": "Contributors making >10% of recent commits",
+            }
+        activity = git_stats.get("commits_per_month", 0)
+        if activity > 0:
+            if activity >= 20:
+                color, explain = "green", "Very active — frequent commits."
+            elif activity >= 5:
+                color, explain = "yellow", "Moderate activity."
+            else:
+                color, explain = "red", "Sparse activity. May be unmaintained."
+            signals["activity_level"] = {
+                "value": f"{activity}/mo",
+                "label": "Activity",
+                "color": color,
+                "explain": explain,
+                "raw": "Commits per month, last available history window",
+            }
+
+    # --- Security signals (regex secret scan of key file heads) ---------
+    sec_findings: list[str] = []
+    SECRET_PATTERNS = [
+        (re.compile(r"AKIA[0-9A-Z]{16}"), "AWS access key"),
+        (re.compile(r"(?i)aws_secret[_\s]*[:=][\s\"']*[A-Za-z0-9/+=]{40}"), "AWS secret key"),
+        (re.compile(r"ghp_[A-Za-z0-9]{36,40}"), "GitHub personal token"),
+        (re.compile(r"gho_[A-Za-z0-9]{36,40}"), "GitHub OAuth token"),
+        (re.compile(r"sk_live_[A-Za-z0-9]{20,}"), "Stripe live secret key"),
+        (re.compile(r"-----BEGIN (?:RSA )?PRIVATE KEY-----"), "Private key block"),
+    ]
+    for kf in key_files[:5]:
+        code = kf.get("code") or ""
+        for pat, label in SECRET_PATTERNS:
+            if pat.search(code):
+                sec_findings.append(f"{label} in {kf.get('path')}")
+    if sec_findings:
+        signals["security"] = {
+            "value": str(len(sec_findings)),
+            "label": "Security",
+            "color": "red",
+            "explain": "Possible secrets detected in source. Review immediately: " + "; ".join(sec_findings[:3]),
+        }
+    else:
+        signals["security"] = {
+            "value": "OK",
+            "label": "Security",
+            "color": "green",
+            "explain": "No obvious secrets in scanned source.",
+        }
+
     return signals
+
+
+def _git_stats(repo_root: Path) -> Optional[dict]:
+    """Parse `git log` for bus factor + activity level. Returns None if
+    not a git repo or if the clone was shallow (--depth=1, no history).
+
+    Best-effort. Uses subprocess with strict timeouts so a hung git
+    process can't stall the analyzer."""
+    import subprocess
+    git_dir = repo_root / ".git"
+    if not git_dir.exists():
+        return None
+    try:
+        # Author emails for the last 6 months (or all history if shorter).
+        proc = subprocess.run(
+            ["git", "log", "--since=6.months.ago", "--format=%aE"],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if proc.returncode != 0:
+            return None
+        lines = [l.strip() for l in proc.stdout.splitlines() if l.strip()]
+        if not lines:
+            return None
+        total = len(lines)
+        from collections import Counter
+        counts = Counter(lines)
+        # Contributors making >10% of recent commits.
+        threshold = max(1, total * 0.10)
+        bus = sum(1 for _, n in counts.items() if n >= threshold)
+
+        # commits/month — over the actual span we have. Fetch span via
+        # earliest commit date.
+        date_proc = subprocess.run(
+            ["git", "log", "--reverse", "--format=%aI", "--since=6.months.ago"],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        commits_per_month = 0
+        if date_proc.returncode == 0 and date_proc.stdout.strip():
+            from datetime import datetime, timezone
+            first_line = date_proc.stdout.strip().splitlines()[0]
+            try:
+                first_dt = datetime.fromisoformat(first_line.replace("Z", "+00:00"))
+                span_days = max(
+                    1, (datetime.now(timezone.utc) - first_dt).days
+                )
+                months = max(1.0, span_days / 30.0)
+                commits_per_month = round(total / months)
+            except ValueError:
+                commits_per_month = total // 6  # fallback assume full 6mo
+        return {
+            "bus_factor": bus,
+            "commits_per_month": commits_per_month,
+            "total_recent_commits": total,
+            "contributor_count": len(counts),
+        }
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return None
