@@ -34,7 +34,26 @@ const nextConfig = {
       {
         // Lock the rest of the site down by default.
         source: "/((?!embed).*)",
-        headers: [{ key: "X-Frame-Options", value: "SAMEORIGIN" }],
+        headers: [
+          { key: "X-Frame-Options", value: "SAMEORIGIN" },
+          // v8 security headers. Conservative enough that every
+          // supported browser handles them without behavioural
+          // changes. CSP intentionally NOT set here — our analytics +
+          // Sentry + fontshare + posthog scripts make a meaningful
+          // CSP a multi-day project. Tracked in FOLLOWUP_v8.md.
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+          {
+            key: "Permissions-Policy",
+            value: "camera=(), microphone=(), geolocation=(), browsing-topics=()",
+          },
+          // Strict-Transport-Security only useful behind HTTPS;
+          // harmless on localhost where browsers ignore it.
+          {
+            key: "Strict-Transport-Security",
+            value: "max-age=31536000; includeSubDomains",
+          },
+        ],
       },
     ];
   },
