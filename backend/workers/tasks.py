@@ -96,7 +96,11 @@ def generate_video(self, job_id: str, repo_url: str, options: dict[str, Any]) ->
             progress=40,
             details={"stage": "Writing narration script"},
         )
-        script = script_generator.generate(analysis)
+        intake_kind = options.get("intake_kind") or "repo"
+        intake_meta = options.get("intake_meta") or {}
+        script = script_generator.generate(
+            analysis, intake_kind=intake_kind, intake_meta=intake_meta
+        )
         _update(
             job_id,
             status=VideoStatus.scripting,

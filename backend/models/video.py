@@ -72,6 +72,14 @@ class Video(Base):
     # the panel can render without re-running the analyzer.
     quality_signals: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
+    # v7d — intake kind: 'repo' (default), 'commit', 'file', 'gist', 'pr',
+    # 'compare'. Drives downstream branching in the worker (which scenes
+    # to render, which script prompt to use).
+    intake_kind: Mapped[str] = mapped_column(String(16), default="repo")
+    # JSON blob with kind-specific extras: {commit_sha, file_path,
+    # file_ref, gist_id, pr_number, compared_repo_url}.
+    intake_meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
@@ -100,4 +108,6 @@ class Video(Base):
             "visibility": self.visibility,
             "summary_data": self.summary_data,
             "quality_signals": self.quality_signals,
+            "intake_kind": self.intake_kind,
+            "intake_meta": self.intake_meta,
         }

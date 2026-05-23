@@ -663,11 +663,26 @@ def _scrub_line_references(narration: str) -> str:
     return out.strip()
 
 
-def generate(analysis: AnalysisResult) -> dict[str, Any]:
+def generate(
+    analysis: AnalysisResult,
+    intake_kind: str = "repo",
+    intake_meta: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """Generate a narration script.
+
+    `intake_kind` + `intake_meta` let the prompt focus on a specific
+    commit, file, gist, PR, or comparison — falling back to the full
+    repo walkthrough when kind == 'repo'. The meta blob is passed to
+    Claude as a "focus" hint that supplements the analysis payload."""
     settings = get_settings()
     if settings.has_claude:
         try:
-            return _generate_with_claude(analysis, settings.anthropic_api_key)
+            return _generate_with_claude(
+                analysis,
+                settings.anthropic_api_key,
+                intake_kind=intake_kind,
+                intake_meta=intake_meta or {},
+            )
         except Exception as exc:
             logger.warning("Claude script generation failed, falling back to mock: %s", exc)
     return _mock_script(analysis)
@@ -726,13 +741,26 @@ def _build_analysis_payload(analysis: AnalysisResult) -> str:
     return json.dumps(d, default=str)[:36_000]
 
 
-def _generate_with_claude(analysis: AnalysisResult, api_key: str) -> dict[str, Any]:
+def _generate_with_claude(
+    analysis: AnalysisResult,
+    api_key: str,
+    intake_kind: str = "repo",
+    intake_meta: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
     # Import lazily so the worker boots even if the package is unavailable.
     from anthropic import Anthropic
 
     client = Anthropic(api_key=api_key)
     analysis_payload = _build_analysis_payload(analysis)
     logger.info("Script generator analysis payload size: %d chars", len(analysis_payload))
+
+    focus_block = _build_focus_block(intake_kind, intake_meta or {})
+    user_content = (
+        "Here is the codebase analysis. Generate the script JSON.\n\n"
+        f"```json\n{analysis_payload}\n```"
+    )
+    if focus_block:
+        user_content += f"\n\n{focus_block}"
 
     message = client.messages.create(
         model="claude-sonnet-4-5",
@@ -741,10 +769,7 @@ def _generate_with_claude(analysis: AnalysisResult, api_key: str) -> dict[str, A
         messages=[
             {
                 "role": "user",
-                "content": (
-                    "Here is the codebase analysis. Generate the script JSON.\n\n"
-                    f"```json\n{analysis_payload}\n```"
-                ),
+                "content": user_content,
             }
         ],
     )
@@ -1707,3 +1732,60 @@ def _default_takeaways(analysis: AnalysisResult) -> list[str]:
         f"Source flow runs through {primary_module}",
         f"{name} keeps its surface area small and focused",
     ]
+
+
+def _build_focus_block(kind: str, meta: dict[str, Any]) -> str:
+    """Build the "focus" addendum we append to the user message when the
+    intake URL was something more specific than a plain repo. The block
+    is plain text so Claude reads it naturally — it's not JSON because
+    we want Claude to *narrate around* the focus, not key off field
+    names.
+
+    For 'repo' we return empty string — no addendum needed.
+    """
+    if kind == "repo" or not meta:
+        return ""
+    if kind == "commit":
+        sha = meta.get("commit_sha", "")
+        return (
+            "FOCUS: The user submitted a specific commit URL. Treat this "
+            f"as a 'what changed and why' video about commit {sha[:7]}. "
+            "Open with the problem the commit solves; spend the middle on "
+            "the diff itself; close with what this unlocks. Use the "
+            "broader repo context only to ground the change."
+        )
+    if kind == "file":
+        path = meta.get("file_path", "")
+        return (
+            f"FOCUS: The user submitted a single file URL ({path}). Make "
+            "this file the centerpiece. Open by explaining what role this "
+            "file plays in the codebase; use the middle scenes to walk "
+            "through its most important functions / exports; close with "
+            "how the rest of the repo uses it. Other files only appear "
+            "if they import from this one."
+        )
+    if kind == "gist":
+        return (
+            "FOCUS: The user submitted a gist. Treat it as a self-contained "
+            "snippet — open with the problem the snippet illustrates, walk "
+            "through the cleverness, close with how it could be adapted. "
+            "There is no broader repo context to lean on."
+        )
+    if kind == "pr":
+        pr_n = meta.get("pr_number")
+        return (
+            f"FOCUS: The user submitted PR #{pr_n}. The script should "
+            "narrate the PR like a code-review walkthrough: open with the "
+            "motivation, walk through the most significant hunks, close "
+            "with what merging this unlocks."
+        )
+    if kind == "compare":
+        b = meta.get("compared_repo_url", "")
+        return (
+            "FOCUS: Compare-mode. The user wants this repo contrasted "
+            f"against {b}. Use the script to find shared concepts, "
+            "highlight where the two diverge, and close with 'which would "
+            "I reach for, and when.' Make it a comparison — not two "
+            "back-to-back tours."
+        )
+    return ""

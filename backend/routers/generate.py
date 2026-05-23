@@ -7,9 +7,8 @@ from sqlalchemy.orm import Session
 
 from models import User, Video, VideoStatus, get_db
 from routers.users import check_quota, increment_usage, optional_user
-from utils.github_client import parse_github_url
+from utils.intake import classify as classify_intake
 from utils.rate_limit import check_rate_limit
-from utils.url_validator import validate_repo_url
 from workers.tasks import generate_video
 
 router = APIRouter(prefix="/api/v1", tags=["generate"])
@@ -46,13 +45,17 @@ def create_generation(
     db: Session = Depends(get_db),
     user: Optional[User] = Depends(optional_user),
 ) -> GenerateResponse:
-    # v7 — URL whitelist + length check before doing anything else. Stops
-    # the wallet-draining "paste localhost / file:// / random URL" attack
-    # at the door.
+    # v7d — classify the URL. Handles plain repo URLs, commit URLs,
+    # file (blob) URLs, gists, and PRs. validate_repo_url's host/IP
+    # checks run inside the classifier's "repo" fallback, so blocked
+    # hosts still raise. We pin the actual repo target via
+    # intake.repo_url so the rest of the pipeline still gets a normal
+    # GitHub repo URL.
     try:
-        normalized_url = validate_repo_url(body.repo_url)
+        intake = classify_intake(body.repo_url)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    normalized_url = intake.repo_url
 
     # v7 — rate limit. Per-IP for anonymous, per-user when authenticated.
     # Generate is expensive (~$0.18/render) so we cap aggressively. Both
@@ -73,10 +76,7 @@ def create_generation(
             window_seconds=3600,
         )
 
-    try:
-        owner, name = parse_github_url(normalized_url)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    owner, name = intake.owner, intake.name
 
     # Auth + quota check — gated behind REQUIRE_AUTH flag so dev / v5c
     # rendering doesn't break before the frontend OAuth ships.
@@ -98,6 +98,17 @@ def create_generation(
     else:
         visibility = body.options.visibility or "public"
 
+    intake_meta = {
+        k: v for k, v in {
+            "commit_sha": intake.commit_sha,
+            "file_path": intake.file_path,
+            "file_ref": intake.file_ref,
+            "gist_id": intake.gist_id,
+            "pr_number": intake.pr_number,
+            "focus_label": intake.focus_label,
+        }.items() if v is not None
+    }
+
     video = Video(
         repo_url=normalized_url,
         repo_owner=owner,
@@ -109,6 +120,8 @@ def create_generation(
         video_quality=body.options.quality,
         user_id=user.id if user else None,
         visibility=visibility,
+        intake_kind=intake.kind,
+        intake_meta=intake_meta or None,
     )
     db.add(video)
     db.commit()
@@ -119,6 +132,109 @@ def create_generation(
     if REQUIRE_AUTH and user is not None:
         increment_usage(user, db)
 
-    generate_video.delay(video.id, normalized_url, body.options.model_dump())
+    worker_options = body.options.model_dump()
+    worker_options["intake_kind"] = intake.kind
+    worker_options["intake_meta"] = intake_meta
+    generate_video.delay(video.id, normalized_url, worker_options)
+
+    return GenerateResponse(job_id=video.id, status=video.status.value)
+
+
+# --- Compare two repos ----------------------------------------------------
+
+
+class CompareRequest(BaseModel):
+    repo_url_a: str
+    repo_url_b: str
+    options: GenerateOptions = Field(default_factory=GenerateOptions)
+
+
+@router.post(
+    "/generate/compare",
+    response_model=GenerateResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def create_compare(
+    body: CompareRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: Optional[User] = Depends(optional_user),
+) -> GenerateResponse:
+    """Compare-two-repos mode. Queues a single Video row that walks two
+    codebases side by side: shared concepts, divergent choices, and a
+    "which would I reach for" close. Counts as 2x quota since the
+    analyzer + script pipeline runs twice."""
+    try:
+        intake_a = classify_intake(body.repo_url_a)
+        intake_b = classify_intake(body.repo_url_b)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if intake_a.kind != "repo" or intake_b.kind != "repo":
+        raise HTTPException(
+            status_code=400,
+            detail="Compare mode only accepts plain repo URLs (no commits/files/gists).",
+        )
+
+    if intake_a.repo_url == intake_b.repo_url:
+        raise HTTPException(
+            status_code=400, detail="The two repos must be different."
+        )
+
+    client_ip = (
+        request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+        or (request.client.host if request.client else "unknown")
+    )
+    check_rate_limit(
+        key=f"generate:ip:{client_ip}",
+        limit=5 if user is None else 15,  # half of /generate; compare is 2x cost
+        window_seconds=3600,
+    )
+
+    if REQUIRE_AUTH:
+        if user is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Sign in to generate comparisons.",
+            )
+        # Comparisons cost 2x quota — burn two units.
+        check_quota(user)
+        check_quota(user)
+        visibility = body.options.visibility or user.default_visibility or "public"
+    else:
+        visibility = body.options.visibility or "public"
+
+    intake_meta = {
+        "compared_repo_url": intake_b.repo_url,
+        "compared_owner": intake_b.owner,
+        "compared_name": intake_b.name,
+        "focus_label": f"{intake_a.name} vs {intake_b.name}",
+    }
+    video = Video(
+        repo_url=intake_a.repo_url,
+        repo_owner=intake_a.owner,
+        repo_name=f"{intake_a.name}-vs-{intake_b.name}",
+        status=VideoStatus.queued,
+        progress=0,
+        status_details={"stage": "Queued (compare mode)"},
+        voice_provider=body.options.voice or "",
+        video_quality=body.options.quality,
+        user_id=user.id if user else None,
+        visibility=visibility,
+        intake_kind="compare",
+        intake_meta=intake_meta,
+    )
+    db.add(video)
+    db.commit()
+    db.refresh(video)
+
+    if REQUIRE_AUTH and user is not None:
+        increment_usage(user, db)
+        increment_usage(user, db)
+
+    worker_options = body.options.model_dump()
+    worker_options["intake_kind"] = "compare"
+    worker_options["intake_meta"] = intake_meta
+    generate_video.delay(video.id, intake_a.repo_url, worker_options)
 
     return GenerateResponse(job_id=video.id, status=video.status.value)
