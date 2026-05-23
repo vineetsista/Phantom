@@ -9,6 +9,7 @@ import { ExitIntentPopup } from "@/components/shared/ExitIntentPopup";
 import { GrainOverlay } from "@/components/shared/GrainOverlay";
 import { JsonLd } from "@/components/shared/JsonLd";
 import { PageTransition } from "@/components/shared/PageTransition";
+import { SessionProvider } from "@/components/shared/SessionProvider";
 import { ToasterProvider } from "@/components/shared/Toaster";
 import "@/styles/globals.css";
 
@@ -126,17 +127,19 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body className="min-h-screen bg-void font-body text-bone antialiased">
         <AnalyticsScripts />
-        <ToasterProvider>
-          <GrainOverlay />
-          <CursorFollower />
-          <Navbar />
-          <main className="relative">
-            <PageTransition>{children}</PageTransition>
-          </main>
-          <Footer />
-          <ExitIntentPopup />
-          <CommandPalette />
-        </ToasterProvider>
+        <SessionProvider>
+          <ToasterProvider>
+            <GrainOverlay />
+            <CursorFollower />
+            <Navbar />
+            <main className="relative">
+              <PageTransition>{children}</PageTransition>
+            </main>
+            <Footer />
+            <ExitIntentPopup />
+            <CommandPalette />
+          </ToasterProvider>
+        </SessionProvider>
       </body>
     </html>
   );
