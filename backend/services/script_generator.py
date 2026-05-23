@@ -556,6 +556,13 @@ _SLOP_PATTERNS: tuple[re.Pattern, ...] = (
     # Em-dash overload (3+ in one section). Single em-dash mid-sentence is
     # fine; two is borderline; three or more reads as AI bingo.
     re.compile(r"(?:.*—.*){3,}", re.DOTALL),
+    # v8 — banned video-tutorial openers. These match only at the start of
+    # the narration (or just after a sentence terminator) so we don't trip
+    # on legitimate uses of "today" / "welcome" inside a sentence.
+    re.compile(r"(?:^|[.!?]\s+)Welcome to\b", re.IGNORECASE),
+    re.compile(r"(?:^|[.!?]\s+)Today\s+we(?:'ll|\s+will)\b", re.IGNORECASE),
+    re.compile(r"(?:^|[.!?]\s+)In this (?:video|guide|tutorial|explainer|walkthrough)\b", re.IGNORECASE),
+    re.compile(r"(?:^|[.!?]\s+)Let'?s (?:dive|jump|get) (?:in|into|started)\b", re.IGNORECASE),
 )
 
 # Title/hook only — adverbs. Body narration can use them sparingly.
