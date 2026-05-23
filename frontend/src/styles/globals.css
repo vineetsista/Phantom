@@ -67,6 +67,26 @@ body {
   }
 }
 
+/* v8 — global button press feedback. Every button gets a 160ms scale
+   bump on :active so click/tap reads as physical. Pairs with the
+   custom focus ring further down. Doesn't override per-button hover
+   transforms; just adds the press feedback layer. */
+button,
+[role="button"],
+a.button,
+.link-pill {
+  transition: transform 160ms cubic-bezier(0.23, 1, 0.32, 1),
+              border-color 200ms ease-out,
+              background-color 200ms ease-out,
+              color 200ms ease-out;
+}
+button:active:not(:disabled),
+[role="button"]:active,
+a.button:active,
+.link-pill:active {
+  transform: scale(0.97);
+}
+
 /* Background atmosphere — sits behind everything, fixed so it doesn't scroll.
    Two slow blurred gradient blobs + a faint grid. */
 body::before {
