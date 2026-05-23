@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from models import User, Video, get_db
+from models import User, Video, VideoStatus, get_db
 from routers.users import optional_user
 
 logger = logging.getLogger(__name__)
@@ -104,7 +104,7 @@ def search_videos(
     pattern = f"%{q.strip()}%"
     stmt = (
         select(Video)
-        .where(Video.visibility == "public", Video.status == "completed")
+        .where(Video.visibility == "public", Video.status == VideoStatus.complete)
         .where(
             or_(
                 Video.repo_owner.ilike(pattern),
@@ -150,7 +150,7 @@ def trending(db: Session = Depends(get_db), limit: int = 12) -> dict:
         stmt = select(Video).where(
             Video.id.in_(ids),
             Video.visibility == "public",
-            Video.status == "completed",
+            Video.status == VideoStatus.complete,
         )
         rows = db.execute(stmt).scalars().all()
         out = [
@@ -163,7 +163,7 @@ def trending(db: Session = Depends(get_db), limit: int = 12) -> dict:
     # Fallback — most-viewed completed public videos.
     stmt = (
         select(Video)
-        .where(Video.visibility == "public", Video.status == "completed")
+        .where(Video.visibility == "public", Video.status == VideoStatus.complete)
         .order_by(Video.view_count.desc())
         .limit(limit)
     )
