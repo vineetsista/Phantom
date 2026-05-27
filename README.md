@@ -82,8 +82,8 @@ Requires Docker Desktop. You'll also want:
 Setup:
 
 ```bash
-git clone https://github.com/<your-fork>/Phantom
-cd Phantom
+git clone https://github.com/vineetsista/Phantom-Codebase-Explainer
+cd Phantom-Codebase-Explainer
 cp .env.example .env   # then fill in the keys
 docker-compose up --build
 ```
