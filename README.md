@@ -12,6 +12,12 @@
 ![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?style=flat-square&logo=docker)
 ![License](https://img.shields.io/badge/license-Apache_2.0-blue?style=flat-square)
 
+![Phantom architecture scene — module 4 of 7, urlCheck, with the file path and one-line description](docs/screenshots/hero-architecture.png)
+
+*Frame from a generated walkthrough of `sindresorhus/is-online`. Six more
+modules reveal in sync with the narration — the spoken word and the slide
+land on the same frame.*
+
 </div>
 
 ---
@@ -23,6 +29,14 @@ Phantom is a personal project: an AI pipeline that turns any public GitHub repo 
 It runs locally via Docker Compose. There's no hosted version, no plans, no quotas — you bring your own Anthropic + ElevenLabs (or OpenAI) keys and it generates videos for free.
 
 The point isn't the product. The point is the pipeline: how do you take a directory of source files and reliably turn it into something a senior engineer would actually want to watch?
+
+> 🛠 **Want the technical deep-dive?** [`docs/BUILDING.md`](docs/BUILDING.md) covers the word-level sync algorithm, the stop-slop revision loop, the schema-patch-instead-of-Alembic strategy, the intake classifier, and the bugs that took longer than they should have.
+
+### A few frames from a real render
+
+| Intro card | Architecture (module 4 of 7) | Code walkthrough (line 130 highlighted) |
+|---|---|---|
+| ![intro](docs/screenshots/intro.png) | ![architecture](docs/screenshots/hero-architecture.png) | ![code-walkthrough](docs/screenshots/code-walkthrough.png) |
 
 ---
 

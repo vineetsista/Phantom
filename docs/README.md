@@ -8,6 +8,12 @@ README](../README.md) instead.
 
 ## Layout
 
+- **[`BUILDING.md`](BUILDING.md)** — technical deep-dive on how Phantom
+  actually works. The interesting decisions (sync algorithm, slop
+  detection, schema patches) explained at the level you'd want when
+  reading a friend's project.
+- **`screenshots/`** — frames extracted from a real generated video,
+  used in the top-level README.
 - **`RELEASE_NOTES*.md`** — per-version summary of what landed in each
   iteration (v7, v8 are the most recent).
 - **`FOLLOWUP*.md`** — what was deferred from each version and why.
