@@ -42,3 +42,9 @@ frontend/public/jobs/
 *.log
 npm-debug.log*
 yarn-error.log*
+worker_logs.txt
+*-logs.txt
+
+# --- agent runtime ---
+.agents/
+.claude/
